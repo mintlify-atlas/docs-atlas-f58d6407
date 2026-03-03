@@ -1,0 +1,80 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "TurkeyDPI",
+  "projectDescription": "Anti-censorship proxy that fragments packets to bypass SNI-based website blocking in Turkey",
+  "theme": "aspen",
+  "primaryColor": "#e74c3c",
+  "lightColor": "#c0392b",
+  "darkColor": "#c0392b",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "installation", "quickstart"]
+          },
+          {
+            "group": "Usage",
+            "pages": ["usage/basic-usage", "usage/isp-presets", "usage/macos-app", "usage/configuration"]
+          },
+          {
+            "group": "Technical Details",
+            "pages": ["technical/how-it-works", "technical/dpi-evasion", "technical/packet-fragmentation", "technical/dns-bypass"]
+          },
+          {
+            "group": "Command Reference",
+            "pages": ["commands/bypass", "commands/run", "commands/daemon-control", "commands/config-management"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Engine",
+            "pages": ["api/bypass-engine", "api/config", "api/pipeline"]
+          },
+          {
+            "group": "Transforms",
+            "pages": ["api/transforms/fragment", "api/transforms/resegment", "api/transforms/padding", "api/transforms/jitter", "api/transforms/header", "api/transforms/decoy"]
+          },
+          {
+            "group": "Backend",
+            "pages": ["api/backend/proxy", "api/backend/transparent", "api/backend/tun"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "SNI fragmentation to evade DPI",
+    "HTTP Host header fragmentation",
+    "ISP-specific presets for Turkish providers",
+    "SOCKS5 proxy backend",
+    "DNS-over-HTTPS (DoH) resolution",
+    "Configurable packet transforms (fragment, padding, jitter)",
+    "Native macOS menu bar app",
+    "Daemon mode with IPC control"
+  ],
+  "publicApiSurface": [
+    "turkeydpi bypass - Start bypass proxy with ISP presets",
+    "turkeydpi run - Run daemon with control server",
+    "turkeydpi start/stop - Control daemon lifecycle",
+    "turkeydpi status - Get engine status",
+    "turkeydpi health - Check system health",
+    "turkeydpi stats - View traffic statistics",
+    "BypassEngine::new() - Create bypass engine",
+    "BypassEngine::process_outgoing() - Process outgoing packets",
+    "BypassConfig::turk_telekom() - Turk Telekom preset",
+    "BypassConfig::vodafone_tr() - Vodafone preset",
+    "BypassConfig::superonline() - Superonline preset",
+    "BypassConfig::aggressive() - Aggressive preset",
+    "Config::load_from_file() - Load configuration",
+    "Pipeline::process() - Process packets through transforms",
+    "FragmentTransform - Split packets into fragments",
+    "JitterTransform - Add timing delays",
+    "PaddingTransform - Add padding bytes"
+  ]
+}
