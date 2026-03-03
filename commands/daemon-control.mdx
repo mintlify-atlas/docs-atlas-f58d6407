@@ -1,0 +1,507 @@
+---
+title: 'Daemon Control'
+description: 'Commands to manage the running TurkeyDPI daemon'
+icon: 'gears'
+---
+
+## Overview
+
+Daemon control commands interact with a running TurkeyDPI daemon (started with `run` command) via Unix socket. These commands allow you to monitor status, gather statistics, and manage the engine without restarting.
+
+All commands communicate through the control socket (default: `/tmp/turkeydpi.sock`).
+
+## Commands
+
+### start
+
+Start the DPI bypass engine.
+
+```bash
+turkeydpi start
+```
+
+**Output:**
+```
+Engine started
+```
+
+**Use case**: Start processing after `stop` command or initialization.
+
+**Note**: The engine auto-starts when daemon launches, so this is mainly used after explicit stop.
+
+---
+
+### stop
+
+Stop the DPI bypass engine.
+
+```bash
+turkeydpi stop
+```
+
+**Output:**
+```
+Engine stopped
+```
+
+**Use case**: Temporarily pause packet processing without shutting down the daemon.
+
+**Effect**:
+- Stops accepting new flows
+- Existing flows are completed
+- Control server remains active
+- Proxy backend (if enabled) stops accepting connections
+
+---
+
+### status
+
+Display detailed daemon status.
+
+```bash
+turkeydpi status
+```
+
+**Output:**
+```
+Status:
+  State: Running
+  Running: true
+  Active flows: 127
+  Packets processed: 458392
+  Bytes processed: 245.67 MB
+  Errors: 3
+  Last error: Flow table full
+  Config: /etc/turkeydpi/config.toml
+```
+
+**Fields:**
+
+<ResponseField name="State" type="enum">
+  Engine state: `Stopped`, `Starting`, `Running`, `Stopping`, or `Error`
+</ResponseField>
+
+<ResponseField name="Running" type="boolean">
+  Whether engine is currently processing packets
+</ResponseField>
+
+<ResponseField name="Active flows" type="integer">
+  Number of currently tracked flows in the flow table
+</ResponseField>
+
+<ResponseField name="Packets processed" type="integer">
+  Total packets processed since engine start
+</ResponseField>
+
+<ResponseField name="Bytes processed" type="string">
+  Total data processed (formatted: B, KB, MB, GB)
+</ResponseField>
+
+<ResponseField name="Errors" type="integer">
+  Total error count since engine start
+</ResponseField>
+
+<ResponseField name="Last error" type="string" optional>
+  Most recent error message (if any)
+</ResponseField>
+
+<ResponseField name="Config" type="string" optional>
+  Path to loaded configuration file (if specified)
+</ResponseField>
+
+---
+
+### health
+
+Display health information and system details.
+
+```bash
+turkeydpi health
+```
+
+**Output:**
+```
+Health:
+  Version: 0.1.0
+  API Version: 1.0.0
+  Running: true
+  Uptime: 3647s
+  Backend: proxy
+  OS: linux (x86_64)
+```
+
+**Fields:**
+
+<ResponseField name="Version" type="string">
+  TurkeyDPI version (from Cargo.toml)
+</ResponseField>
+
+<ResponseField name="API Version" type="string">
+  Control protocol API version (currently `1.0.0`)
+</ResponseField>
+
+<ResponseField name="Running" type="boolean">
+  Overall daemon running status
+</ResponseField>
+
+<ResponseField name="Uptime" type="integer">
+  Seconds since daemon started
+</ResponseField>
+
+<ResponseField name="Backend" type="string" optional>
+  Active backend type: `proxy`, `transparent`, or `tun`
+</ResponseField>
+
+<ResponseField name="OS" type="string">
+  Operating system and architecture
+</ResponseField>
+
+**Use case**: Quick health check, version verification, uptime monitoring.
+
+---
+
+### stats
+
+Display detailed packet processing statistics.
+
+```bash
+turkeydpi stats
+```
+
+**Output:**
+```
+Statistics:
+  Packets in:       1245789
+  Packets out:      1245623
+  Bytes in:         856.34 MB
+  Bytes out:        857.12 MB
+  Packets dropped:  166
+  Packets matched:  892456
+  Transformed:      892450
+  Transform errors: 6
+  Active flows:     234
+  Flows created:    15678
+  Flows evicted:    15444
+  Fragments gen:    445623
+  Total jitter:     12456ms
+  Decoys sent:      0
+```
+
+**Metrics:**
+
+<ResponseField name="Packets in" type="integer">
+  Total packets received from clients
+</ResponseField>
+
+<ResponseField name="Packets out" type="integer">
+  Total packets sent to destinations
+</ResponseField>
+
+<ResponseField name="Bytes in" type="string">
+  Total data received (formatted)
+</ResponseField>
+
+<ResponseField name="Bytes out" type="string">
+  Total data sent (formatted)
+</ResponseField>
+
+<ResponseField name="Packets dropped" type="integer">
+  Packets dropped due to errors or policy
+</ResponseField>
+
+<ResponseField name="Packets matched" type="integer">
+  Packets matching configured rules
+</ResponseField>
+
+<ResponseField name="Transformed" type="integer">
+  Packets successfully transformed
+</ResponseField>
+
+<ResponseField name="Transform errors" type="integer">
+  Transformation failures
+</ResponseField>
+
+<ResponseField name="Active flows" type="integer">
+  Currently tracked flows
+</ResponseField>
+
+<ResponseField name="Flows created" type="integer">
+  Total flows created since start
+</ResponseField>
+
+<ResponseField name="Flows evicted" type="integer">
+  Flows removed (timeout or table full)
+</ResponseField>
+
+<ResponseField name="Fragments gen" type="integer">
+  Total packet fragments generated
+</ResponseField>
+
+<ResponseField name="Total jitter" type="string">
+  Cumulative jitter delay applied (milliseconds)
+</ResponseField>
+
+<ResponseField name="Decoys sent" type="integer">
+  Decoy packets sent (if decoy transform enabled)
+</ResponseField>
+
+**Use case**: Performance monitoring, rule effectiveness analysis, troubleshooting.
+
+---
+
+### reset-stats
+
+Reset all statistics counters to zero.
+
+```bash
+turkeydpi reset-stats
+```
+
+**Output:**
+```
+Statistics reset
+```
+
+**Effect**: Resets all counters from `stats` command to 0. Does not affect:
+- Flow table (active flows remain)
+- Engine state
+- Configuration
+
+**Use case**: Benchmarking, testing, clearing after configuration changes.
+
+---
+
+## Global Options
+
+All daemon control commands support these global options:
+
+<ParamField path="--socket" type="path" default="/tmp/turkeydpi.sock">
+  Path to control socket.
+  
+  Must match the socket path used when starting the daemon with `run --socket`.
+  
+  **Example:**
+  ```bash
+  turkeydpi --socket /var/run/turkeydpi.sock status
+  ```
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Logging level for the command itself (not the daemon).
+</ParamField>
+
+<ParamField path="--json-logs" type="boolean" default="false">
+  Output logs in JSON format.
+</ParamField>
+
+## Examples
+
+### Monitor active connections
+
+```bash
+watch -n 1 'turkeydpi stats | grep "Active flows"'
+```
+
+**Output:**
+```
+Every 1.0s: turkeydpi stats | grep "Active flows"
+  Active flows:     234
+```
+
+### Check health in script
+
+```bash
+#!/bin/bash
+if turkeydpi health | grep -q "Running: true"; then
+    echo "TurkeyDPI is healthy"
+else
+    echo "TurkeyDPI is not running"
+    exit 1
+fi
+```
+
+### Get uptime
+
+```bash
+turkeydpi health | grep Uptime | awk '{print $2}'
+```
+
+### Check transformation effectiveness
+
+```bash
+turkeydpi stats | grep -E "(Packets matched|Transformed)"
+```
+
+**Output:**
+```
+  Packets matched:  892456
+  Transformed:      892450
+```
+
+Transform rate: 892450/892456 = 99.999% success
+
+### Monitor with custom socket
+
+```bash
+turkeydpi --socket /var/run/turkeydpi.sock status
+```
+
+## Integration Examples
+
+### Prometheus Exporter Script
+
+```bash
+#!/bin/bash
+# Export TurkeyDPI metrics for Prometheus
+
+STATS=$(turkeydpi stats)
+
+echo "# HELP turkeydpi_packets_in Total packets received"
+echo "# TYPE turkeydpi_packets_in counter"
+echo "turkeydpi_packets_in $(echo "$STATS" | grep 'Packets in' | awk '{print $3}')"
+
+echo "# HELP turkeydpi_active_flows Currently active flows"
+echo "# TYPE turkeydpi_active_flows gauge"
+echo "turkeydpi_active_flows $(echo "$STATS" | grep 'Active flows' | awk '{print $3}')"
+
+# ... more metrics ...
+```
+
+### Health Check for Monitoring
+
+```bash
+#!/bin/bash
+# Nagios/Icinga compatible health check
+
+HEALTH=$(turkeydpi health 2>&1)
+RET=$?
+
+if [ $RET -ne 0 ]; then
+    echo "CRITICAL - Cannot connect to TurkeyDPI daemon"
+    exit 2
+fi
+
+if echo "$HEALTH" | grep -q "Running: true"; then
+    UPTIME=$(echo "$HEALTH" | grep Uptime | awk '{print $2}')
+    echo "OK - TurkeyDPI running, uptime ${UPTIME}s"
+    exit 0
+else
+    echo "WARNING - TurkeyDPI daemon not running"
+    exit 1
+fi
+```
+
+### Auto-restart on Error State
+
+```bash
+#!/bin/bash
+# Monitor and auto-restart on error
+
+while true; do
+    STATUS=$(turkeydpi status 2>&1)
+    
+    if echo "$STATUS" | grep -q "State: Error"; then
+        echo "$(date): Error state detected, restarting..."
+        systemctl restart turkeydpi
+    fi
+    
+    sleep 60
+done
+```
+
+## Control Protocol
+
+The control commands use a Unix socket protocol with JSON messages:
+
+### Request Format
+
+```json
+{
+  "id": 1,
+  "command": {
+    "type": "get_status"
+  }
+}
+```
+
+### Response Format
+
+```json
+{
+  "id": 1,
+  "success": true,
+  "result": "status",
+  "payload": {
+    "running": true,
+    "state": "running",
+    "active_flows": 127,
+    ...
+  }
+}
+```
+
+**Available Commands:**
+- `health` - Get health info
+- `start` - Start engine
+- `stop` - Stop engine
+- `get_config` - Get current config
+- `set_config` - Update config
+- `reload` - Reload from file
+- `get_stats` - Get statistics
+- `reset_stats` - Reset counters
+- `get_status` - Get status
+- `ping` - Connectivity test
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Failed to connect to socket">
+    **Causes:**
+    - Daemon not running
+    - Wrong socket path
+    - Permission denied
+    
+    **Solutions:**
+    ```bash
+    # Check if daemon is running
+    ps aux | grep turkeydpi
+    
+    # Verify socket exists
+    ls -la /tmp/turkeydpi.sock
+    
+    # Check permissions
+    chmod 666 /tmp/turkeydpi.sock
+    
+    # Use correct socket path
+    turkeydpi --socket /var/run/turkeydpi.sock status
+    ```
+  </Accordion>
+  
+  <Accordion title="Connection refused">
+    Daemon is running but not accepting connections. Check logs:
+    ```bash
+    journalctl -u turkeydpi -n 50
+    ```
+  </Accordion>
+  
+  <Accordion title="Stale socket file">
+    Socket file exists but daemon is not running:
+    ```bash
+    rm /tmp/turkeydpi.sock
+    systemctl restart turkeydpi
+    ```
+  </Accordion>
+  
+  <Accordion title="Command timeout">
+    Daemon is overloaded or hung. Check resource usage:
+    ```bash
+    top -p $(pgrep turkeydpi)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## See Also
+
+- [run command](/commands/run) - Start the daemon
+- [Configuration Management](/commands/config-management) - Config validation and generation
+- [Configuration Guide](/usage/configuration) - Full configuration reference

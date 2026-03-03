@@ -1,0 +1,379 @@
+---
+title: "Proxy Backend"
+description: "SOCKS5 and HTTP proxy backend implementation for TurkeyDPI"
+---
+
+## Overview
+
+The `ProxyBackend` implements a SOCKS5 proxy server that intercepts network connections and applies DPI bypass techniques through the TurkeyDPI engine pipeline. This is the primary backend for most use cases.
+
+## ProxyBackend
+
+The main proxy backend structure that implements the `Backend` trait.
+
+### Structure
+
+```rust
+pub struct ProxyBackend {
+    running: Arc<AtomicBool>,
+    shutdown_tx: Option<mpsc::Sender<()>>,
+    config: Option<ProxySettings>,
+    task_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    active_connections: Arc<AtomicU64>,
+}
+```
+
+### Fields
+
+<ParamField path="running" type="Arc<AtomicBool>">
+  Atomic flag indicating whether the backend is currently running
+</ParamField>
+
+<ParamField path="shutdown_tx" type="Option<mpsc::Sender<()>>">
+  Channel sender for graceful shutdown signaling
+</ParamField>
+
+<ParamField path="config" type="Option<ProxySettings>">
+  Current proxy configuration settings
+</ParamField>
+
+<ParamField path="task_handle" type="Mutex<Option<tokio::task::JoinHandle<()>>>">
+  Handle to the running proxy accept loop task
+</ParamField>
+
+<ParamField path="active_connections" type="Arc<AtomicU64>">
+  Counter tracking the number of active connections
+</ParamField>
+
+## Methods
+
+### new()
+
+Creates a new `ProxyBackend` instance.
+
+```rust
+pub fn new() -> Self
+```
+
+**Returns:** A new `ProxyBackend` in a stopped state.
+
+**Example:**
+```rust
+use backend::ProxyBackend;
+
+let backend = ProxyBackend::new();
+```
+
+### start()
+
+Starts the proxy backend and begins accepting connections.
+
+```rust
+async fn start(&mut self, config: BackendConfig) -> Result<BackendHandle>
+```
+
+**Parameters:**
+
+<ParamField path="config" type="BackendConfig" required>
+  Backend configuration including:
+  - `engine_config`: DPI bypass engine configuration
+  - `max_queue_size`: Maximum packet queue size
+  - `backend_settings`: Must be `BackendSettings::Proxy(ProxySettings)`
+</ParamField>
+
+**Returns:** `BackendHandle` containing:
+- `shutdown_tx`: Channel for triggering shutdown
+- `stats`: Reference to statistics collector
+- `pipeline`: Reference to the DPI bypass pipeline
+
+**Errors:**
+- `BackendError::AlreadyRunning` - Backend is already running
+- `BackendError::NotSupported` - Wrong backend settings type provided
+- `BackendError::BindFailed` - Failed to bind to listen address
+- `BackendError::Engine` - Engine initialization failed
+
+**Example:**
+```rust
+use backend::{ProxyBackend, BackendConfig, BackendSettings, ProxySettings, Backend};
+use engine::Config;
+
+let mut backend = ProxyBackend::new();
+let config = BackendConfig {
+    engine_config: Config::default(),
+    max_queue_size: 1000,
+    backend_settings: BackendSettings::Proxy(ProxySettings {
+        listen_addr: "127.0.0.1:1080".parse().unwrap(),
+        proxy_type: ProxyType::Socks5,
+        max_connections: 1000,
+        timeout_secs: 300,
+    }),
+};
+
+let handle = backend.start(config).await?;
+```
+
+### stop()
+
+Stops the proxy backend and closes all connections.
+
+```rust
+async fn stop(&mut self) -> Result<()>
+```
+
+**Errors:**
+- `BackendError::NotRunning` - Backend is not currently running
+
+**Example:**
+```rust
+backend.stop().await?;
+```
+
+### is_running()
+
+Checks if the backend is currently running.
+
+```rust
+fn is_running(&self) -> bool
+```
+
+**Returns:** `true` if the backend is running, `false` otherwise.
+
+### is_supported()
+
+Checks if the proxy backend is supported on this platform.
+
+```rust
+fn is_supported() -> bool
+```
+
+**Returns:** Always returns `true` (proxy backend is supported on all platforms).
+
+### name()
+
+Returns the backend name.
+
+```rust
+fn name(&self) -> &'static str
+```
+
+**Returns:** `"proxy"`
+
+## ProxySettings
+
+Configuration settings for the proxy backend.
+
+```rust
+pub struct ProxySettings {
+    pub listen_addr: SocketAddr,
+    pub proxy_type: ProxyType,
+    pub max_connections: usize,
+    pub timeout_secs: u64,
+}
+```
+
+### Fields
+
+<ParamField path="listen_addr" type="SocketAddr" required>
+  Address and port to listen on for incoming proxy connections
+  
+  **Default:** `127.0.0.1:1080`
+</ParamField>
+
+<ParamField path="proxy_type" type="ProxyType" required>
+  Type of proxy protocol to use
+  
+  **Default:** `ProxyType::Socks5`
+</ParamField>
+
+<ParamField path="max_connections" type="usize" required>
+  Maximum number of concurrent connections allowed
+  
+  **Default:** `1000`
+</ParamField>
+
+<ParamField path="timeout_secs" type="u64" required>
+  Connection timeout in seconds
+  
+  **Default:** `300`
+</ParamField>
+
+## ProxyType
+
+Supported proxy protocol types.
+
+```rust
+pub enum ProxyType {
+    Socks5,
+    HttpConnect,
+}
+```
+
+### Variants
+
+<ParamField path="Socks5" type="ProxyType">
+  SOCKS5 proxy protocol (fully implemented)
+</ParamField>
+
+<ParamField path="HttpConnect" type="ProxyType">
+  HTTP CONNECT proxy protocol (not yet implemented)
+</ParamField>
+
+## SOCKS5 Implementation
+
+The proxy backend includes a full SOCKS5 server implementation that:
+
+1. **Handles authentication**: Supports "no authentication" method (0x00)
+2. **Supports all address types**:
+   - IPv4 addresses (ATYP 0x01)
+   - Domain names (ATYP 0x03) with DNS resolution
+   - IPv6 addresses (ATYP 0x04)
+3. **Processes CONNECT commands**: Only CONNECT (0x01) is supported
+4. **Applies DPI bypass**: Outbound data flows through the pipeline
+5. **Relays bidirectional traffic**: Efficient tokio::select! based relay
+
+### Flow Key Generation
+
+For each SOCKS5 connection, a flow key is generated:
+
+```rust
+let flow_key = FlowKey::new(
+    client_addr.ip(),
+    dst_addr,
+    client_addr.port(),
+    dst_port,
+    Protocol::Tcp,
+);
+```
+
+This key identifies the flow in the DPI bypass pipeline for state tracking and packet manipulation.
+
+### Connection Lifecycle
+
+```rust
+async fn handle_socks5(
+    mut client: TcpStream,
+    client_addr: SocketAddr,
+    pipeline: Arc<Pipeline>,
+    stats: Arc<Stats>,
+    active_conns: Arc<AtomicU64>,
+)
+```
+
+1. **Version negotiation**: Validate SOCKS5 version (0x05)
+2. **Method selection**: Choose authentication method
+3. **Request parsing**: Parse CONNECT request and extract destination
+4. **Connection establishment**: Connect to destination address
+5. **Response**: Send success or error response
+6. **Stream relay**: Bidirectionally relay data with pipeline processing
+
+### Packet Processing
+
+Outbound traffic (client → remote) is processed through the engine pipeline:
+
+```rust
+match pipeline.process(flow_key, data) {
+    Ok(output) => {
+        for packet in output.all_packets() {
+            remote_write.write_all(&packet).await?;
+        }
+    }
+    Err(e) => {
+        warn!(error = %e, "Pipeline processing error");
+        break;
+    }
+}
+```
+
+Inbound traffic (remote → client) passes through without modification.
+
+## Connection Management
+
+The `ConnectionGuard` ensures accurate connection counting:
+
+```rust
+struct ConnectionGuard {
+    counter: Arc<AtomicU64>,
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+```
+
+Connections are rejected when `active_connections >= max_connections`.
+
+## Error Handling
+
+The proxy backend handles various error conditions:
+
+- **Invalid SOCKS version**: Returns method selection error (0xFF)
+- **Unsupported command**: Returns command not supported (0x07)
+- **Unsupported address type**: Returns address type not supported (0x08)
+- **Connection failed**: Returns general failure (0x05) or host unreachable (0x04)
+- **Max connections**: Silently rejects connection and logs warning
+
+## Example: Complete Usage
+
+```rust
+use backend::{ProxyBackend, BackendConfig, BackendSettings, ProxySettings, ProxyType, Backend};
+use engine::Config;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create proxy backend
+    let mut backend = ProxyBackend::new();
+    
+    // Configure the backend
+    let config = BackendConfig {
+        engine_config: Config {
+            sni_fragmentation: true,
+            fragment_size: 40,
+            ..Config::default()
+        },
+        max_queue_size: 1000,
+        backend_settings: BackendSettings::Proxy(ProxySettings {
+            listen_addr: "127.0.0.1:1080".parse()?,
+            proxy_type: ProxyType::Socks5,
+            max_connections: 500,
+            timeout_secs: 300,
+        }),
+    };
+    
+    // Start the backend
+    let handle = backend.start(config).await?;
+    println!("Proxy backend started on 127.0.0.1:1080");
+    
+    // Let it run for some time
+    tokio::time::sleep(Duration::from_secs(3600)).await;
+    
+    // Check statistics
+    let stats = handle.stats();
+    println!("Packets processed: {}", stats.packets_in());
+    
+    // Shutdown
+    backend.stop().await?;
+    println!("Proxy backend stopped");
+    
+    Ok(())
+}
+```
+
+## Performance Characteristics
+
+- **Async I/O**: All operations use tokio async runtime
+- **Per-connection tasks**: Each connection runs in its own tokio task
+- **Zero-copy where possible**: Uses `BytesMut` for efficient buffer management
+- **Automatic cleanup**: Connection guards ensure proper resource cleanup
+- **Flow tracking**: Pipeline maintains per-flow state for stateful DPI evasion
+
+## Platform Support
+
+The proxy backend is supported on all platforms:
+- Linux
+- macOS
+- Windows
+
+No special privileges required (unlike TUN backend).

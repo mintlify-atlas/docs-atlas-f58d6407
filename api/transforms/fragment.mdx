@@ -1,0 +1,151 @@
+---
+title: 'Fragment Transform'
+description: 'Split packets into smaller fragments to evade DPI signature detection'
+---
+
+## Overview
+
+The Fragment transform splits outgoing packets into smaller fragments, making it harder for DPI systems to detect protocol signatures. This transform is particularly effective against systems that expect complete protocol handshakes in single packets.
+
+## Structure
+
+```rust
+pub struct FragmentTransform {
+    params: FragmentParams,
+}
+```
+
+## Configuration
+
+<ParamField path="min_size" type="usize" default="1" required>
+  Minimum fragment size in bytes. Packets smaller than this will not be fragmented.
+</ParamField>
+
+<ParamField path="max_size" type="usize" default="40" required>
+  Maximum fragment size in bytes. When `randomize` is false, all fragments will be this size.
+</ParamField>
+
+<ParamField path="split_at_offset" type="Option<usize>" default="None">
+  If set, the packet will be split at exactly this byte offset into two fragments. This takes precedence over min/max size settings.
+</ParamField>
+
+<ParamField path="randomize" type="bool" default="true">
+  When enabled, fragment sizes will vary pseudo-randomly between `min_size` and `max_size`. When disabled, all fragments will be `max_size`.
+</ParamField>
+
+## Methods
+
+### new
+
+```rust
+pub fn new(params: &FragmentParams) -> Self
+```
+
+Creates a new Fragment transform with the specified parameters.
+
+### fragment_data
+
+```rust
+pub fn fragment_data(&self, data: &[u8]) -> Vec<BytesMut>
+```
+
+Splits the input data into fragments according to the configured parameters.
+
+**Returns:** Vector of fragments that reassemble to the original data.
+
+### apply
+
+```rust
+fn apply(&self, ctx: &mut FlowContext<'_>, data: &mut BytesMut) -> Result<TransformResult>
+```
+
+Applies the fragmentation transform to a packet. If the packet is smaller than `min_size`, it passes through unchanged.
+
+**Returns:** `TransformResult::Fragmented` if fragmentation occurred, `TransformResult::Continue` otherwise.
+
+## Behavior
+
+- Packets smaller than or equal to `min_size` are not fragmented
+- When `split_at_offset` is set, the packet is split into exactly two fragments at that offset
+- Otherwise, packets are split into multiple fragments based on `min_size`, `max_size`, and `randomize` settings
+- The first fragment replaces the original packet data, subsequent fragments are emitted via the flow context
+- All data is preserved - fragments can be reassembled to recover the original packet
+- Fragment count statistics are tracked in `ctx.state.transform_state.fragment.fragments_generated`
+
+## Example Configuration
+
+### Basic fragmentation
+
+```json
+{
+  "fragment": {
+    "min_size": 5,
+    "max_size": 10,
+    "randomize": false
+  }
+}
+```
+
+### Split at specific offset
+
+```json
+{
+  "fragment": {
+    "min_size": 1,
+    "max_size": 100,
+    "split_at_offset": 5,
+    "randomize": false
+  }
+}
+```
+
+This configuration splits packets at byte 5, creating two fragments:
+- Fragment 1: bytes 0-4
+- Fragment 2: bytes 5-end
+
+### Randomized fragmentation
+
+```json
+{
+  "fragment": {
+    "min_size": 3,
+    "max_size": 7,
+    "randomize": true
+  }
+}
+```
+
+Fragment sizes will vary pseudo-randomly between 3 and 7 bytes.
+
+## Code Example
+
+From fragment.rs:133:
+
+```rust
+#[test]
+fn test_fragment_basic() {
+    let params = FragmentParams {
+        min_size: 5,
+        max_size: 10,
+        split_at_offset: None,
+        randomize: false,
+    };
+    let transform = FragmentTransform::new(&params);
+
+    let data = b"Hello, this is a test message that should be fragmented";
+    let fragments = transform.fragment_data(data);
+
+    assert!(fragments.len() > 1);
+    
+    // Verify data integrity
+    let reassembled: Vec<u8> = fragments.iter().flat_map(|f| f.iter().copied()).collect();
+    assert_eq!(reassembled.as_slice(), data);
+}
+```
+
+## Validation
+
+The following validation rules are enforced in config.rs:76-88:
+
+- `min_size` must be greater than 0
+- `max_size` must be greater than or equal to `min_size`

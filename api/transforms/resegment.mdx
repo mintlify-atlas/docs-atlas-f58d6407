@@ -1,0 +1,160 @@
+---
+title: 'Resegment Transform'
+description: 'Split packets into fixed-size segments with configurable limits'
+---
+
+## Overview
+
+The Resegment transform divides packets into fixed-size segments, similar to Fragment but with different segmentation logic. This transform is useful for creating uniform packet sizes that can bypass size-based DPI heuristics.
+
+## Structure
+
+```rust
+pub struct ResegmentTransform {
+    params: ResegmentParams,
+}
+```
+
+## Configuration
+
+<ParamField path="segment_size" type="usize" default="16" required>
+  The size of each segment in bytes. All segments will be this size except possibly the last one.
+</ParamField>
+
+<ParamField path="max_segments" type="usize" default="8" required>
+  Maximum number of segments to create. If the packet would create more segments than this, the remaining data is placed in a final segment.
+</ParamField>
+
+## Methods
+
+### new
+
+```rust
+pub fn new(params: &ResegmentParams) -> Self
+```
+
+Creates a new Resegment transform with the specified parameters.
+
+### segment_data
+
+```rust
+pub fn segment_data(&self, data: &[u8]) -> Vec<BytesMut>
+```
+
+Splits the input data into fixed-size segments.
+
+**Returns:** Vector of segments. The first `max_segments` segments will be exactly `segment_size` bytes (except if less data remains). Any remaining data goes into a final segment.
+
+### apply
+
+```rust
+fn apply(&self, ctx: &mut FlowContext<'_>, data: &mut BytesMut) -> Result<TransformResult>
+```
+
+Applies the resegmentation transform to a packet. If the packet is smaller than or equal to `segment_size`, it passes through unchanged.
+
+**Returns:** `TransformResult::Fragmented` if segmentation occurred, `TransformResult::Continue` otherwise.
+
+## Behavior
+
+- Packets smaller than or equal to `segment_size` are not resegmented
+- Creates up to `max_segments` segments of exactly `segment_size` bytes
+- Any remaining data after `max_segments` is placed in a final segment
+- The first segment replaces the original packet data, subsequent segments are emitted via the flow context
+- All data is preserved - segments can be reassembled to recover the original packet
+- Segment count statistics are tracked in `ctx.state.transform_state.resegment.segments_generated`
+
+## Example Configuration
+
+### Basic resegmentation
+
+```json
+{
+  "resegment": {
+    "segment_size": 10,
+    "max_segments": 100
+  }
+}
+```
+
+Splits packets into 10-byte segments with no practical limit.
+
+### Limited segments
+
+```json
+{
+  "resegment": {
+    "segment_size": 5,
+    "max_segments": 3
+  }
+}
+```
+
+Creates at most 3 segments of 5 bytes each, with any remaining data in a 4th segment.
+
+For a 20-byte packet:
+- Segment 1: bytes 0-4 (5 bytes)
+- Segment 2: bytes 5-9 (5 bytes)
+- Segment 3: bytes 10-14 (5 bytes)
+- Segment 4: bytes 15-19 (5 bytes, remainder)
+
+## Code Example
+
+From resegment.rs:108:
+
+```rust
+#[test]
+fn test_resegment_basic() {
+    let params = ResegmentParams {
+        segment_size: 10,
+        max_segments: 100,
+    };
+    let transform = ResegmentTransform::new(&params);
+
+    let data = b"This is a test message for resegmentation";
+    let segments = transform.segment_data(data);
+
+    // Verify all segments except possibly the last are exactly segment_size
+    for (i, segment) in segments.iter().enumerate() {
+        if i < segments.len() - 1 {
+            assert_eq!(segment.len(), 10);
+        }
+    }
+
+    // Verify data integrity
+    let reassembled: Vec<u8> = segments.iter().flat_map(|s| s.iter().copied()).collect();
+    assert_eq!(reassembled.as_slice(), data);
+}
+```
+
+## Max Segments Behavior
+
+From resegment.rs:131:
+
+```rust
+#[test]
+fn test_resegment_max_segments() {
+    let params = ResegmentParams {
+        segment_size: 5,
+        max_segments: 3,
+    };
+    let transform = ResegmentTransform::new(&params);
+
+    let data = b"12345678901234567890"; // 20 bytes
+    let segments = transform.segment_data(data);
+
+    // Creates 4 segments total: 3 at max_segments + 1 remainder
+    assert_eq!(segments.len(), 4);
+    
+    // All data is preserved
+    let reassembled: Vec<u8> = segments.iter().flat_map(|s| s.iter().copied()).collect();
+    assert_eq!(reassembled.as_slice(), data);
+}
+```
+
+## Difference from Fragment
+
+- **Resegment** uses a fixed segment size and creates uniform segments
+- **Fragment** supports randomized fragment sizes and split-at-offset
+- Resegment is better for creating predictable packet patterns
+- Fragment is better for evading signature detection with variable-sized fragments

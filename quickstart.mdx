@@ -1,80 +1,195 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get TurkeyDPI running in 60 seconds
 ---
 
-## Get started in three steps
+Get TurkeyDPI up and running in under a minute to bypass SNI-based blocking.
 
-Get your documentation site running locally and make your first customization.
+## Installation
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Steps>
+  <Step title="Install Rust">
+    TurkeyDPI requires Rust 1.70 or later:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+  </Step>
 
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+  <Step title="Clone and install">
+    ```bash
+    git clone https://github.com/1etu/turkeydpi.git
+    cd turkeydpi
+    cargo install --path cli
+    ```
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
+    This installs the `turkeydpi` binary to `~/.cargo/bin/`.
+  </Step>
+
+  <Step title="Start the bypass proxy">
+    ```bash
+    turkeydpi bypass --preset aggressive -v
+    ```
+    
+    The proxy listens on `127.0.0.1:8844` by default.
+    
+    <Note>
+    The **aggressive** preset is recommended for maximum compatibility. It uses the smallest fragments and adds timing delays.
+    </Note>
+  </Step>
+
+  <Step title="Configure your browser">
+    Set your system or browser proxy to:
+    - **Host**: `127.0.0.1`
+    - **Port**: `8844`
+    - **Protocol**: HTTP/HTTPS proxy (not SOCKS)
+    
+    <Tabs>
+      <Tab title="Chrome/Edge">
+        Settings → System → Open proxy settings → Manual proxy configuration
+        
+        - HTTP Proxy: `127.0.0.1:8844`
+        - HTTPS Proxy: `127.0.0.1:8844`
+        - Check "Use this proxy for all protocols"
+      </Tab>
+      
+      <Tab title="Firefox">
+        Settings → Network Settings → Manual proxy configuration
+        
+        - HTTP Proxy: `127.0.0.1:8844`
+        - Check "Also use this proxy for HTTPS"
+      </Tab>
+      
+      <Tab title="System-wide (macOS)">
+        System Settings → Network → Advanced → Proxies
+        
+        - Web Proxy (HTTP): `127.0.0.1:8844`
+        - Secure Web Proxy (HTTPS): `127.0.0.1:8844`
+      </Tab>
+      
+      <Tab title="System-wide (Linux)">
+        ```bash
+        export http_proxy=http://127.0.0.1:8844
+        export https_proxy=http://127.0.0.1:8844
+        ```
+        
+        Or configure via GNOME/KDE network settings.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Test the connection">
+    Visit a blocked website (e.g., `discord.com`, `twitter.com`) in your browser. If it loads, TurkeyDPI is working!
+    
+    Watch the terminal for real-time logs showing packet fragmentation:
+    
+    ```
+    [INFO] Proxy listening on 127.0.0.1:8844
+    [DEBUG] New connection: discord.com:443
+    [DEBUG] Detected TLS ClientHello, SNI: discord.com
+    [DEBUG] Fragmenting packet: 517 bytes → 3 fragments
+    [DEBUG] Fragment 1: 5 bytes
+    [DEBUG] Fragment 2: 5 bytes  
+    [DEBUG] Fragment 3: 507 bytes
+    [DEBUG] Connection established
+    ```
+  </Step>
+</Steps>
+
+## ISP-Specific Presets
+
+If the aggressive preset causes issues, try your ISP's optimized preset:
+
+<CodeGroup>
+```bash Turk Telekom
+turkeydpi bypass --preset turk-telekom -v
+```
+
+```bash Vodafone TR
+turkeydpi bypass --preset vodafone -v
+```
+
+```bash Superonline
+turkeydpi bypass --preset superonline -v
+```
+</CodeGroup>
+
+Each preset is tuned for specific DPI implementations:
+
+| Preset | Split Position | Fragment Size | Delay | Best For |
+|--------|---------------|---------------|-------|----------|
+| **Aggressive** | 0 | 5 bytes | 10ms | Maximum compatibility |
+| **Turk Telekom** | 2 | 20 bytes | 0ms | TT customers |
+| **Vodafone** | 3 | 30 bytes | 100μs | Vodafone TR |
+| **Superonline** | 1 | 15 bytes | 0ms | Superonline |
+
+## Troubleshooting
+
+<Accordion title="Connection times out">
+  - Verify the proxy is running: `curl -x http://127.0.0.1:8844 http://example.com`
+  - Check firewall settings allow localhost connections
+  - Try a different preset: `--preset turk-telekom`
 </Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
+<Accordion title="Website still blocked">
+  - Your ISP may use DNS poisoning. TurkeyDPI includes DoH support by default
+  - Try the aggressive preset: `--preset aggressive`
+  - Check logs with `-v` flag for errors
+  - Verify proxy settings in your browser
 </Accordion>
 
-## Next steps
+<Accordion title="Slow connection">
+  - The aggressive preset adds 10ms delay. Try `turk-telekom` or `superonline` (0ms delay)
+  - Disable verbose logging (remove `-v`)
+  - Check your internet connection speed
+</Accordion>
 
-Now that you have your docs running, explore these key features:
+<Accordion title="Certificate errors">
+  TurkeyDPI is a transparent proxy and doesn't intercept TLS. Certificate errors indicate a different issue:
+  - Check your system time is correct
+  - Verify DNS resolution is working
+  - Try clearing browser cache and SSL state
+</Accordion>
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Usage Guide" icon="book" href="/usage/basic-usage">
+    Learn all CLI commands and options
+  </Card>
+  
+  <Card title="ISP Presets" icon="sliders" href="/usage/isp-presets">
+    Deep dive into preset configurations
+  </Card>
+  
+  <Card title="macOS App" icon="apple" href="/usage/macos-app">
+    Use the native menu bar application
+  </Card>
+  
+  <Card title="How It Works" icon="microscope" href="/technical/how-it-works">
+    Understand the bypass techniques
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Advanced: Daemon Mode
+
+For persistent operation, run TurkeyDPI as a daemon:
+
+```bash
+# Start daemon with proxy backend
+turkeydpi run --proxy --listen 127.0.0.1:8844
+
+# In another terminal, check status
+turkeydpi status
+
+# View live statistics
+turkeydpi stats
+```
+
+Daemon mode provides:
+- Background operation
+- IPC control commands
+- Configuration hot-reloading
+- Statistics and health monitoring
+
+See [Daemon Control](/commands/daemon-control) for details.

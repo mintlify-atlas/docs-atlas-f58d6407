@@ -1,0 +1,208 @@
+---
+title: 'Jitter Transform'
+description: 'Add timing delays to packets to disrupt temporal traffic analysis'
+---
+
+## Overview
+
+The Jitter transform adds pseudo-random delays to packet transmission, disrupting temporal traffic patterns that DPI systems use for classification. This helps defeat timing-based traffic analysis and flow fingerprinting.
+
+## Structure
+
+```rust
+pub struct JitterTransform {
+    params: JitterParams,
+}
+```
+
+## Configuration
+
+<ParamField path="min_ms" type="u64" default="0" required>
+  Minimum jitter delay in milliseconds. When `min_ms` equals `max_ms`, a fixed delay is applied.
+</ParamField>
+
+<ParamField path="max_ms" type="u64" default="50" required>
+  Maximum jitter delay in milliseconds. The actual delay will vary pseudo-randomly between `min_ms` and `max_ms`.
+  
+  Must not exceed the safety limit defined in `limits.max_jitter_ms` (default: 500ms).
+</ParamField>
+
+## Methods
+
+### new
+
+```rust
+pub fn new(params: &JitterParams) -> Self
+```
+
+Creates a new Jitter transform with the specified parameters.
+
+### calculate_jitter
+
+```rust
+fn calculate_jitter(&self, seed: u64) -> Duration
+```
+
+Calculates the jitter delay for the current packet using a seed derived from packet count and data length.
+
+**Returns:** Duration between `min_ms` and `max_ms`.
+
+### apply
+
+```rust
+fn apply(&self, ctx: &mut FlowContext<'_>, data: &mut BytesMut) -> Result<TransformResult>
+```
+
+Applies a jitter delay to the packet.
+
+**Returns:** `TransformResult::Delay` if jitter was applied, `TransformResult::Continue` if max_ms is 0.
+
+## Behavior
+
+- If `max_ms` is 0, no delay is applied
+- Delay is calculated pseudo-randomly based on packet count and data length using: `seed = packet_count * 31337 + data.len()`
+- The delay is requested via `ctx.request_delay(jitter)`
+- Statistics are tracked:
+  - `last_jitter_ms`: The jitter applied to the current packet
+  - `total_jitter_ms`: Cumulative jitter across all packets in the flow
+
+## Example Configuration
+
+### Fixed delay
+
+```json
+{
+  "jitter": {
+    "min_ms": 25,
+    "max_ms": 25
+  }
+}
+```
+
+Adds exactly 25ms delay to every packet.
+
+### Variable delay
+
+```json
+{
+  "jitter": {
+    "min_ms": 10,
+    "max_ms": 50
+  }
+}
+```
+
+Adds between 10ms and 50ms delay to each packet.
+
+### No jitter
+
+```json
+{
+  "jitter": {
+    "min_ms": 0,
+    "max_ms": 0
+  }
+}
+```
+
+## Code Example
+
+From jitter.rs:115:
+
+```rust
+#[test]
+fn test_jitter_applied() {
+    let params = JitterParams {
+        min_ms: 10,
+        max_ms: 50,
+    };
+    let transform = JitterTransform::new(&params);
+    
+    let key = test_flow_key();
+    let mut state = FlowState::new(key);
+    let mut ctx = FlowContext::new(&key, &mut state, None);
+    let mut data = BytesMut::from(&b"test data"[..]);
+
+    let result = transform.apply(&mut ctx, &mut data).unwrap();
+    assert_eq!(result, TransformResult::Delay);
+    
+    let delay = ctx.delay.unwrap();
+    assert!(delay >= Duration::from_millis(10));
+    assert!(delay <= Duration::from_millis(50));
+}
+```
+
+## Jitter Calculation
+
+From jitter.rs:22:
+
+```rust
+fn calculate_jitter(&self, seed: u64) -> Duration {
+    if self.params.max_ms == 0 {
+        return Duration::ZERO;
+    }
+
+    let range = self.params.max_ms - self.params.min_ms;
+    if range == 0 {
+        return Duration::from_millis(self.params.min_ms);
+    }
+
+    // Pseudo-random jitter based on seed
+    let jitter_ms = self.params.min_ms + (seed % (range + 1));
+    Duration::from_millis(jitter_ms)
+}
+```
+
+The seed is generated in `apply()` using:
+
+```rust
+let seed = ctx.state.packet_count
+    .wrapping_mul(31337)
+    .wrapping_add(data.len() as u64);
+```
+
+## Validation
+
+From config.rs:90-98:
+
+```rust
+if self.transforms.jitter.max_ms > self.limits.max_jitter_ms {
+    return Err(EngineError::validation(
+        "transforms.jitter.max_ms",
+        format!(
+            "exceeds safety limit of {}ms",
+            self.limits.max_jitter_ms
+        ),
+    ));
+}
+```
+
+Jitter has a safety limit (default 500ms) to prevent excessive delays that could cause connection timeouts.
+
+## Helper Method
+
+From config.rs:381:
+
+```rust
+impl JitterParams {
+    pub fn as_duration_range(&self) -> (Duration, Duration) {
+        (Duration::from_millis(self.min_ms), Duration::from_millis(self.max_ms))
+    }
+}
+```
+
+Converts millisecond parameters to Duration tuple.
+
+## Use Cases
+
+- **Timing disruption:** Break timing-based traffic fingerprints
+- **Flow anonymization:** Obscure inter-packet timing patterns
+- **Protocol mimicry:** Match timing characteristics of other protocols
+- **Anti-correlation:** Prevent timing correlation attacks
+
+## Performance Considerations
+
+- Jitter delays packet transmission, potentially reducing throughput
+- Higher jitter values increase latency
+- Very high jitter can cause protocol timeouts (hence the safety limit)
+- Consider application requirements when setting jitter values

@@ -1,0 +1,434 @@
+---
+title: "Transparent Proxy Backend"
+description: "HTTP/HTTPS transparent proxy with DPI bypass capabilities"
+---
+
+## Overview
+
+The `BypassProxy` implements a transparent HTTP/HTTPS proxy that intercepts HTTP CONNECT and regular HTTP requests, applies DPI bypass techniques, and forwards traffic to destination servers.
+
+This is a specialized proxy that automatically applies SNI fragmentation for TLS connections and Host header fragmentation for HTTP requests.
+
+## BypassProxy
+
+The main transparent proxy structure with built-in bypass engine.
+
+### Structure
+
+```rust
+pub struct BypassProxy {
+    config: ProxyConfig,
+    stats: Arc<ProxyStats>,
+    dns: Arc<DohResolver>,
+    running: Arc<AtomicBool>,
+    shutdown_tx: Option<mpsc::Sender<()>>,
+}
+```
+
+### Fields
+
+<ParamField path="config" type="ProxyConfig">
+  Proxy configuration including listen address and bypass settings
+</ParamField>
+
+<ParamField path="stats" type="Arc<ProxyStats>">
+  Statistics collector for tracking connections and traffic
+</ParamField>
+
+<ParamField path="dns" type="Arc<DohResolver>">
+  DNS-over-HTTPS resolver for bypassing DNS blocking
+</ParamField>
+
+<ParamField path="running" type="Arc<AtomicBool>">
+  Atomic flag indicating whether the proxy is running
+</ParamField>
+
+<ParamField path="shutdown_tx" type="Option<mpsc::Sender<()>>">
+  Channel for sending shutdown signals
+</ParamField>
+
+## Methods
+
+### new()
+
+Creates a new `BypassProxy` instance.
+
+```rust
+pub fn new(config: ProxyConfig) -> Self
+```
+
+**Parameters:**
+
+<ParamField path="config" type="ProxyConfig" required>
+  Proxy configuration settings
+</ParamField>
+
+**Example:**
+```rust
+use backend::transparent::{BypassProxy, ProxyConfig};
+
+let proxy = BypassProxy::new(ProxyConfig::default());
+```
+
+### run()
+
+Starts the proxy and begins accepting connections.
+
+```rust
+pub async fn run(&mut self) -> io::Result<()>
+```
+
+**Returns:** `Ok(())` on graceful shutdown, or IO error on failure.
+
+**Example:**
+```rust
+let mut proxy = BypassProxy::new(config);
+proxy.run().await?;
+```
+
+### stop()
+
+Stops the proxy gracefully.
+
+```rust
+pub async fn stop(&mut self)
+```
+
+### stats()
+
+Gets a reference to the proxy statistics.
+
+```rust
+pub fn stats(&self) -> Arc<ProxyStats>
+```
+
+**Returns:** Shared reference to `ProxyStats`.
+
+### is_running()
+
+Checks if the proxy is currently running.
+
+```rust
+pub fn is_running(&self) -> bool
+```
+
+**Returns:** `true` if running, `false` otherwise.
+
+## ProxyConfig
+
+Configuration for the transparent proxy.
+
+```rust
+pub struct ProxyConfig {
+    pub listen_addr: SocketAddr,
+    pub bypass: BypassConfig,
+    pub connect_timeout: Duration,
+    pub buffer_size: usize,
+    pub verbose: bool,
+}
+```
+
+### Fields
+
+<ParamField path="listen_addr" type="SocketAddr" required>
+  Address and port to listen on
+  
+  **Default:** `127.0.0.1:8844`
+</ParamField>
+
+<ParamField path="bypass" type="BypassConfig" required>
+  DPI bypass configuration from the engine module
+  
+  **Default:** `BypassConfig::default()`
+</ParamField>
+
+<ParamField path="connect_timeout" type="Duration" required>
+  Timeout for establishing connections to remote servers
+  
+  **Default:** `30 seconds`
+</ParamField>
+
+<ParamField path="buffer_size" type="usize" required>
+  Size of relay buffers in bytes
+  
+  **Default:** `65536` (64 KB)
+</ParamField>
+
+<ParamField path="verbose" type="bool" required>
+  Enable verbose logging of connections
+  
+  **Default:** `false`
+</ParamField>
+
+## ProxyStats
+
+Statistics collector for the transparent proxy.
+
+```rust
+pub struct ProxyStats {
+    pub connections_total: AtomicU64,
+    pub connections_active: AtomicU64,
+    pub bytes_sent: AtomicU64,
+    pub bytes_received: AtomicU64,
+    pub tls_connections: AtomicU64,
+    pub http_connections: AtomicU64,
+    pub bypass_applied: AtomicU64,
+    pub dns_queries: AtomicU64,
+    pub errors: AtomicU64,
+}
+```
+
+### Fields
+
+<ParamField path="connections_total" type="AtomicU64">
+  Total number of connections handled since startup
+</ParamField>
+
+<ParamField path="connections_active" type="AtomicU64">
+  Current number of active connections
+</ParamField>
+
+<ParamField path="bytes_sent" type="AtomicU64">
+  Total bytes sent to remote servers
+</ParamField>
+
+<ParamField path="bytes_received" type="AtomicU64">
+  Total bytes received from remote servers
+</ParamField>
+
+<ParamField path="tls_connections" type="AtomicU64">
+  Number of TLS/HTTPS connections
+</ParamField>
+
+<ParamField path="http_connections" type="AtomicU64">
+  Number of HTTP connections
+</ParamField>
+
+<ParamField path="bypass_applied" type="AtomicU64">
+  Number of times DPI bypass was applied
+</ParamField>
+
+<ParamField path="dns_queries" type="AtomicU64">
+  Number of DNS-over-HTTPS queries performed
+</ParamField>
+
+<ParamField path="errors" type="AtomicU64">
+  Total number of errors encountered
+</ParamField>
+
+### Methods
+
+#### new()
+
+Creates a new statistics collector.
+
+```rust
+pub fn new() -> Arc<Self>
+```
+
+#### print_summary()
+
+Prints a formatted summary of statistics to stdout.
+
+```rust
+pub fn print_summary(&self)
+```
+
+**Output:**
+```
+📊 Statistics:
+   Connections: 150 total, 3 active
+   TLS/HTTPS: 120
+   HTTP: 30
+   Bypass applied: 95
+   DoH DNS queries: 145
+   Data: 2048 KB sent, 8192 KB received
+   Errors: 2
+```
+
+## Protocol Support
+
+### HTTP CONNECT (HTTPS)
+
+Handles HTTP CONNECT tunneling for HTTPS connections:
+
+1. **Parse CONNECT request**: Extract target host:port
+2. **DNS resolution**: Use DNS-over-HTTPS to resolve hostname
+3. **Establish connection**: Connect to remote server
+4. **Send 200 response**: `HTTP/1.1 200 Connection Established`
+5. **Detect protocol**: Read first packet and detect TLS ClientHello
+6. **Apply bypass**: Fragment SNI if TLS detected
+7. **Relay traffic**: Bidirectionally relay all subsequent data
+
+```rust
+async fn handle_connect(
+    mut client: TcpStream,
+    peer_addr: SocketAddr,
+    request: &str,
+    _raw_request: &[u8],
+    config: ProxyConfig,
+    stats: Arc<ProxyStats>,
+    dns: Arc<DohResolver>,
+) -> io::Result<()>
+```
+
+### Regular HTTP Requests
+
+Handles direct HTTP requests (non-CONNECT):
+
+1. **Extract target**: Parse Host header or URL
+2. **DNS resolution**: Resolve via DoH
+3. **Connect to server**: Establish TCP connection
+4. **Rewrite request**: Convert absolute URL to relative path
+5. **Forward request**: Send rewritten request to server
+6. **Relay responses**: Forward server responses to client
+
+```rust
+async fn handle_http_forward(
+    mut client: TcpStream,
+    peer_addr: SocketAddr,
+    request: &str,
+    raw_request: &[u8],
+    target: String,
+    config: ProxyConfig,
+    stats: Arc<ProxyStats>,
+    dns: Arc<DohResolver>,
+) -> io::Result<()>
+```
+
+## DPI Bypass Integration
+
+The proxy uses the `BypassEngine` to detect and modify traffic:
+
+```rust
+let engine = BypassEngine::new(config.bypass.clone());
+let result = engine.process_outgoing(&initial_buf[..initial_len]);
+
+match result.protocol {
+    DetectedProtocol::TlsClientHello => {
+        stats.tls_connections.fetch_add(1, Ordering::Relaxed);
+        if result.modified {
+            info!("🔒 {} [SNI fragmented]", hostname);
+        }
+    }
+    DetectedProtocol::HttpRequest => {
+        stats.http_connections.fetch_add(1, Ordering::Relaxed);
+        if result.modified {
+            info!("🌐 {} [Host fragmented]", hostname);
+        }
+    }
+    DetectedProtocol::Unknown => {
+        // Passthrough
+    }
+}
+```
+
+### Fragment Sending
+
+When bypass is applied, fragments are sent with optional delays:
+
+```rust
+for (i, fragment) in result.fragments.iter().enumerate() {
+    remote.write_all(fragment).await?;
+    stats.bytes_sent.fetch_add(fragment.len() as u64, Ordering::Relaxed);
+    
+    if i < result.fragments.len() - 1 {
+        if let Some(delay) = result.inter_fragment_delay {
+            sleep(delay).await;
+        }
+    }
+}
+remote.flush().await?;
+```
+
+## DNS-over-HTTPS
+
+All DNS queries use DoH to bypass DNS blocking:
+
+```rust
+let resolved_addr = match dns.resolve_host_port(&target).await {
+    Ok(addr) => {
+        stats.dns_queries.fetch_add(1, Ordering::Relaxed);
+        addr
+    }
+    Err(e) => {
+        warn!("DoH resolution failed: {}", e);
+        // Fallback to system resolver
+        tokio::net::lookup_host(&target).await?.next().unwrap()
+    }
+};
+```
+
+## Error Responses
+
+The proxy returns appropriate HTTP error codes:
+
+- **400 Bad Request**: Invalid or unsupported request format
+- **502 Bad Gateway**: Failed to connect to remote server or DNS failure
+- **504 Gateway Timeout**: Connection timeout exceeded
+
+## Example: Complete Usage
+
+```rust
+use backend::transparent::{BypassProxy, ProxyConfig};
+use engine::BypassConfig;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Configure the proxy
+    let config = ProxyConfig {
+        listen_addr: "127.0.0.1:8844".parse()?,
+        bypass: BypassConfig {
+            fragment_sni: true,
+            fragment_http_host: true,
+            fragment_size: 40,
+            delay_ms: 10,
+            ..Default::default()
+        },
+        connect_timeout: Duration::from_secs(30),
+        buffer_size: 65536,
+        verbose: true,
+    };
+    
+    // Create and run the proxy
+    let mut proxy = BypassProxy::new(config);
+    
+    println!("Starting transparent proxy on 127.0.0.1:8844");
+    println!("Configure your browser to use this HTTP proxy");
+    
+    // Run until Ctrl+C
+    proxy.run().await?;
+    
+    // Statistics are printed automatically on shutdown
+    
+    Ok(())
+}
+```
+
+## Browser Configuration
+
+Configure your browser's HTTP proxy settings:
+
+- **HTTP Proxy**: `127.0.0.1`
+- **Port**: `8844` (or your configured port)
+- **Use for HTTPS**: Yes
+- **No proxy for**: (leave empty to proxy everything)
+
+## Performance Characteristics
+
+- **Async I/O**: Fully asynchronous using tokio
+- **Per-connection tasks**: Each connection runs independently
+- **Automatic protocol detection**: TLS/HTTP detection on first packet
+- **DoH caching**: DNS resolver caches results internally
+- **Zero-copy buffers**: Efficient buffer management with configurable sizes
+- **Idle timeouts**: 30-second idle timeout for HTTP connections
+
+## Platform Support
+
+Supported on all platforms:
+- Linux
+- macOS  
+- Windows
+
+No special privileges required.

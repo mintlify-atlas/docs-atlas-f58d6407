@@ -1,0 +1,362 @@
+---
+title: 'Basic Usage'
+description: 'Get started with TurkeyDPI CLI to bypass DPI censorship'
+icon: 'play'
+---
+
+## Quick Start
+
+TurkeyDPI provides a simple command-line interface to bypass DPI-based censorship in Turkey. The easiest way to get started is with the `bypass` command.
+
+<Steps>
+  <Step title="Start the bypass proxy">
+    Run TurkeyDPI with the default aggressive preset:
+    
+    ```bash
+    turkeydpi bypass
+    ```
+    
+    This starts a SOCKS proxy on `127.0.0.1:8844` using the aggressive preset (recommended for most users).
+  </Step>
+
+  <Step title="Configure your system proxy">
+    Set your system's HTTP/HTTPS proxy to:
+    
+    ```
+    127.0.0.1:8844
+    ```
+    
+    <Tabs>
+      <Tab title="macOS">
+        System Preferences → Network → Advanced → Proxies → SOCKS Proxy
+        
+        - Server: `127.0.0.1`
+        - Port: `8844`
+      </Tab>
+      
+      <Tab title="Windows">
+        Settings → Network & Internet → Proxy → Manual proxy setup
+        
+        - Address: `127.0.0.1`
+        - Port: `8844`
+      </Tab>
+      
+      <Tab title="Linux">
+        ```bash
+        export ALL_PROXY="socks5://127.0.0.1:8844"
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Test your connection">
+    Try accessing a blocked website like Discord or Twitter. The proxy will fragment TLS/HTTP packets to evade DPI inspection.
+  </Step>
+</Steps>
+
+## CLI Commands
+
+TurkeyDPI offers several commands for different use cases.
+
+### bypass
+
+Quick bypass mode - starts a SOCKS proxy with pre-configured ISP settings.
+
+```bash
+turkeydpi bypass [OPTIONS]
+```
+
+<Accordion title="Options">
+  | Flag | Description | Default |
+  |------|-------------|--------|
+  | `-l, --listen <ADDRESS>` | Listen address for the proxy | `127.0.0.1:8844` |
+  | `-p, --preset <PRESET>` | ISP preset configuration | `aggressive` |
+  | `-v, --verbose` | Enable verbose logging | `false` |
+</Accordion>
+
+**Examples:**
+
+<CodeGroup>
+```bash Default (Aggressive)
+turkeydpi bypass
+```
+
+```bash Verbose Mode
+turkeydpi bypass -v
+```
+
+```bash Custom Port
+turkeydpi bypass -l 127.0.0.1:9090
+```
+
+```bash Specific ISP Preset
+turkeydpi bypass --preset turk-telekom
+```
+</CodeGroup>
+
+### run
+
+Advanced mode - runs the full engine with custom configuration.
+
+```bash
+turkeydpi run [OPTIONS]
+```
+
+<Accordion title="Options">
+  | Flag | Description | Default |
+  |------|-------------|--------|
+  | `--proxy` | Enable proxy backend | `false` |
+  | `--listen <ADDRESS>` | Listen address | `127.0.0.1:1080` |
+  | `-c, --config <FILE>` | Configuration file path | None |
+  | `--log-level <LEVEL>` | Log level (trace, debug, info, warn, error) | `info` |
+  | `--json-logs` | Output logs in JSON format | `false` |
+  | `--socket <PATH>` | Unix socket for control server | `/tmp/turkeydpi.sock` |
+</Accordion>
+
+**Examples:**
+
+<CodeGroup>
+```bash With Proxy Backend
+turkeydpi run --proxy
+```
+
+```bash Custom Config File
+turkeydpi run --proxy --config config.toml
+```
+
+```bash Debug Logging
+turkeydpi run --proxy --log-level debug
+```
+
+```bash JSON Logs
+turkeydpi run --proxy --json-logs
+```
+</CodeGroup>
+
+### Control Commands
+
+When running in daemon mode with `turkeydpi run`, you can control the engine using these commands:
+
+<Tabs>
+  <Tab title="status">
+    Check the current status of the engine:
+    
+    ```bash
+    turkeydpi status
+    ```
+    
+    **Output:**
+    ```
+    Status:
+      State: Running
+      Running: true
+      Active flows: 42
+      Packets processed: 15823
+      Bytes processed: 8.45 MB
+      Errors: 0
+    ```
+  </Tab>
+  
+  <Tab title="health">
+    Get health information:
+    
+    ```bash
+    turkeydpi health
+    ```
+    
+    **Output:**
+    ```
+    Health:
+      Version: 0.1.0
+      API Version: 1
+      Running: true
+      Uptime: 3600s
+      Backend: proxy
+      OS: linux (x86_64)
+    ```
+  </Tab>
+  
+  <Tab title="stats">
+    View detailed statistics:
+    
+    ```bash
+    turkeydpi stats
+    ```
+    
+    **Output:**
+    ```
+    Statistics:
+      Packets in:       45231
+      Packets out:      45189
+      Bytes in:         12.34 MB
+      Bytes out:        12.30 MB
+      Packets dropped:  0
+      Packets matched:  8934
+      Transformed:      8934
+      Transform errors: 0
+      Active flows:     23
+      Flows created:    156
+      Flows evicted:    133
+      Fragments gen:    17868
+      Total jitter:     450ms
+      Decoys sent:      0
+    ```
+  </Tab>
+  
+  <Tab title="reload">
+    Reload configuration without restarting:
+    
+    ```bash
+    turkeydpi reload config.toml
+    ```
+  </Tab>
+</Tabs>
+
+### Utility Commands
+
+<Accordion title="gen-config">
+  Generate an example configuration file:
+  
+  ```bash
+  turkeydpi gen-config --output config.toml
+  ```
+  
+  Generate JSON format:
+  ```bash
+  turkeydpi gen-config --format json --output config.json
+  ```
+</Accordion>
+
+<Accordion title="validate">
+  Validate a configuration file:
+  
+  ```bash
+  turkeydpi validate config.toml
+  ```
+  
+  **Output:**
+  ```
+  ✓ Configuration is valid: config.toml
+  ```
+</Accordion>
+
+<Accordion title="reset-stats">
+  Reset all statistics counters:
+  
+  ```bash
+  turkeydpi reset-stats
+  ```
+</Accordion>
+
+## Common Use Cases
+
+### For Discord
+
+<CodeGroup>
+```bash Quick Method
+turkeydpi bypass --preset aggressive
+```
+
+```bash Turk Telekom Users
+turkeydpi bypass --preset turk-telekom
+```
+</CodeGroup>
+
+Then set your system proxy to `127.0.0.1:8844`.
+
+### For Twitter/X
+
+Use the same approach as Discord:
+
+```bash
+turkeydpi bypass -v
+```
+
+The verbose flag helps troubleshoot connection issues.
+
+### For Testing Different ISPs
+
+If one preset doesn't work, try others:
+
+```bash
+# Try each preset
+turkeydpi bypass --preset aggressive
+turkeydpi bypass --preset turk-telekom
+turkeydpi bypass --preset vodafone
+turkeydpi bypass --preset superonline
+```
+
+See [ISP Presets](/usage/isp-presets) for detailed information about each preset.
+
+<Note>
+  **Tip:** Start with the `aggressive` preset. It works for most users and ISPs. Only switch to ISP-specific presets if you experience issues.
+</Note>
+
+<Warning>
+  TurkeyDPI only bypasses DPI-based censorship. It does not provide anonymity or encryption. For privacy, use a VPN or Tor.
+</Warning>
+
+## Troubleshooting
+
+### Proxy not working
+
+1. **Check if TurkeyDPI is running:**
+   ```bash
+   # You should see output indicating the proxy is listening
+   ```
+
+2. **Enable verbose logging:**
+   ```bash
+   turkeydpi bypass -v
+   ```
+   This shows detailed information about each connection.
+
+3. **Try a different preset:**
+   Different ISPs use different DPI techniques. See [ISP Presets](/usage/isp-presets).
+
+4. **Verify system proxy settings:**
+   Ensure your system proxy is set to `127.0.0.1:8844` (or your custom port).
+
+### High latency
+
+Some presets add artificial delays to evade DPI buffering. If you experience high latency:
+
+```bash
+# Try presets without delays
+turkeydpi bypass --preset turk-telekom  # no delay
+turkeydpi bypass --preset superonline   # no delay
+```
+
+See the [Configuration guide](/usage/configuration) to customize timing parameters.
+
+### Connection drops
+
+If connections drop frequently:
+
+1. **Check stats for errors:**
+   ```bash
+   turkeydpi stats
+   ```
+   Look for high error counts.
+
+2. **Increase fragment size:**
+   Edit your configuration file and adjust `transforms.fragment.max_size`.
+
+3. **Disable jitter:**
+   Set `global.enable_jitter = false` in your config.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="ISP Presets" icon="network-wired" href="/usage/isp-presets">
+    Learn about preset configurations for different Turkish ISPs
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/usage/configuration">
+    Customize TurkeyDPI with advanced configuration options
+  </Card>
+  
+  <Card title="macOS App" icon="apple" href="/usage/macos-app">
+    Use the native macOS menu bar application
+  </Card>
+</CardGroup>

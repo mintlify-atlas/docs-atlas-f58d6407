@@ -1,0 +1,390 @@
+---
+title: 'run'
+description: 'Start TurkeyDPI daemon with full engine and control server'
+icon: 'play'
+---
+
+## Overview
+
+The `run` command starts the TurkeyDPI daemon with the full DPI bypass engine, control server, and optional proxy backend. This is the primary mode for production deployments.
+
+Unlike the simple `bypass` command, `run` provides:
+- Full configuration file support
+- Unix socket control interface for management
+- Advanced rule-based packet transformation
+- Multiple backend support (proxy, transparent, TUN)
+- Runtime configuration reload
+- Detailed statistics and monitoring
+
+## Usage
+
+```bash
+turkeydpi run [OPTIONS]
+```
+
+## Options
+
+<ParamField path="--proxy" type="boolean" default="false" required>
+  Enable the SOCKS5 proxy backend.
+  
+  When enabled:
+  - Starts a SOCKS5 proxy server on the specified listen address
+  - Processes all traffic through the DPI bypass engine
+  - Supports rule-based transformations from config file
+  
+  **Without this flag**, only the control server runs (useful for transparent/TUN modes).
+</ParamField>
+
+<ParamField path="--listen" type="string" default="127.0.0.1:1080">
+  Proxy backend listen address (SOCKS5 server).
+  
+  Only used when `--proxy` is enabled.
+  
+  **Examples:**
+  - `127.0.0.1:1080` - localhost only (recommended)
+  - `0.0.0.0:1080` - all interfaces (use with caution)
+  - `[::1]:1080` - IPv6 localhost
+</ParamField>
+
+<ParamField path="--config" type="path">
+  Path to configuration file.
+  
+  If not specified, uses default configuration with:
+  - Fragmentation enabled
+  - Padding enabled
+  - HTTPS (port 443) and DNS (port 53) rules
+  - Standard transform parameters
+  
+  **Supported formats:** TOML, JSON
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Logging verbosity level.
+  
+  **Levels:**
+  - `trace` - Very detailed, includes all debug info
+  - `debug` - Detailed operational information
+  - `info` - General informational messages (default)
+  - `warn` - Warning messages only
+  - `error` - Error messages only
+</ParamField>
+
+<ParamField path="--json-logs" type="boolean" default="false">
+  Output structured JSON logs.
+  
+  Each log line is a JSON object with fields:
+  - `timestamp` - ISO 8601 timestamp
+  - `level` - Log level
+  - `target` - Source module
+  - `message` - Log message
+  - Additional contextual fields
+  
+  Useful for log aggregation systems (ELK, Splunk, etc.).
+</ParamField>
+
+<ParamField path="--socket" type="path" default="/tmp/turkeydpi.sock">
+  Unix domain socket path for control server.
+  
+  Used by management commands (`start`, `stop`, `status`, etc.) to communicate with the daemon.
+  
+  **Requirements:**
+  - Parent directory must exist and be writable
+  - Path should be absolute
+  - Will be removed on clean shutdown
+</ParamField>
+
+## Examples
+
+### Start with default configuration (control-only mode)
+
+```bash
+turkeydpi run
+```
+
+**Output:**
+```
+2026-03-03T10:15:23Z INFO turkeydpi::main: Starting TurkeyDPI engine version="0.1.0"
+2026-03-03T10:15:23Z INFO turkeydpi::main: Configuration loaded successfully
+2026-03-03T10:15:23Z INFO turkeydpi::main: Control server started socket="/tmp/turkeydpi.sock"
+2026-03-03T10:15:23Z INFO turkeydpi::main: Running in control-only mode (use --proxy to start proxy backend)
+```
+
+### Start SOCKS5 proxy on default port
+
+```bash
+turkeydpi run --proxy
+```
+
+**Output:**
+```
+2026-03-03T10:15:23Z INFO turkeydpi::main: Starting TurkeyDPI engine version="0.1.0"
+2026-03-03T10:15:23Z INFO turkeydpi::main: Configuration loaded successfully
+2026-03-03T10:15:23Z INFO turkeydpi::main: Control server started socket="/tmp/turkeydpi.sock"
+2026-03-03T10:15:23Z INFO backend::proxy: Starting proxy backend addr="127.0.0.1:1080" proxy_type=Socks5
+2026-03-03T10:15:23Z INFO backend::proxy: Proxy backend started addr="127.0.0.1:1080"
+2026-03-03T10:15:23Z INFO backend::proxy: Proxy backend accepting connections
+```
+
+### Start with custom configuration and port
+
+```bash
+turkeydpi run --proxy --listen 0.0.0.0:1080 --config /etc/turkeydpi/config.toml
+```
+
+### Start with debug logging and JSON output
+
+```bash
+turkeydpi run --proxy --log-level debug --json-logs
+```
+
+**JSON log example:**
+```json
+{"timestamp":"2026-03-03T10:15:23.456Z","level":"INFO","target":"turkeydpi::main","version":"0.1.0","message":"Starting TurkeyDPI engine"}
+{"timestamp":"2026-03-03T10:15:23.789Z","level":"DEBUG","target":"backend::proxy","client":"192.168.1.100:54321","message":"New SOCKS5 connection"}
+```
+
+### Start with custom socket path
+
+```bash
+turkeydpi run --proxy --socket /var/run/turkeydpi/control.sock
+```
+
+## SOCKS5 Proxy Details
+
+When `--proxy` is enabled, TurkeyDPI runs a full SOCKS5 proxy server:
+
+### Supported Features
+- **SOCKS5 protocol** (version 0x05)
+- **Authentication**: No auth (0x00) only
+- **Commands**: CONNECT only
+- **Address types**: IPv4, IPv6, domain names
+- **DNS resolution**: Automatic for domain names
+
+### Connection Flow
+
+1. Client connects to proxy
+2. SOCKS5 handshake (no authentication)
+3. Client sends CONNECT request
+4. Proxy resolves destination (if domain)
+5. Proxy connects to destination
+6. Traffic flows through DPI bypass engine
+7. Engine applies configured transformations
+8. Transformed packets sent to destination
+
+### Pipeline Processing
+
+All traffic through the proxy is processed by the pipeline:
+
+```
+Client → SOCKS5 → Pipeline → Transforms → Destination
+                      ↓
+                  Flow Tracking
+                  Rule Matching
+                  Fragmentation
+                  Padding
+                  Header Normalization
+```
+
+## Configuration File
+
+When `--config` is specified, the daemon loads a TOML or JSON configuration file with:
+
+- **Global settings**: Feature toggles, log level
+- **Rules**: Match criteria and transform chains
+- **Transform parameters**: Fragmentation, padding, jitter settings
+- **Limits**: Flow table, memory, queue sizes
+
+Example minimal config:
+
+```toml
+[global]
+enabled = true
+enable_fragmentation = true
+enable_padding = true
+log_level = "info"
+
+[[rules]]
+name = "https-bypass"
+enabled = true
+priority = 100
+dst_ports = [443]
+protocols = ["tcp"]
+transforms = ["fragment", "padding"]
+
+[transforms.fragment]
+min_size = 1
+max_size = 40
+randomize = true
+```
+
+See [Configuration Guide](/usage/configuration) for full details.
+
+## Control Server
+
+The control server always runs when using `run` command. It provides a Unix socket interface for:
+
+- Starting/stopping the engine
+- Checking health and status
+- Retrieving statistics
+- Reloading configuration
+- Validating config files
+
+Use daemon control commands to interact:
+
+```bash
+# Check if running
+turkeydpi status
+
+# View statistics
+turkeydpi stats
+
+# Reload configuration
+turkeydpi reload /etc/turkeydpi/new-config.toml
+```
+
+See [Daemon Control Commands](/commands/daemon-control) for details.
+
+## Process Management
+
+### Graceful Shutdown
+
+Press `Ctrl+C` or send SIGINT/SIGTERM:
+
+```
+^C
+2026-03-03T10:20:15Z INFO turkeydpi::main: Received shutdown signal
+2026-03-03T10:20:15Z INFO backend::proxy: Stopping proxy backend
+2026-03-03T10:20:15Z INFO backend::proxy: Proxy backend stopped
+2026-03-03T10:20:15Z INFO turkeydpi::main: Shutdown complete
+```
+
+Shutdown process:
+1. Signal received
+2. Stop accepting new connections
+3. Wait for active connections (max 5s)
+4. Stop proxy backend
+5. Stop control server
+6. Clean up socket file
+
+### Running as System Service
+
+Create systemd service (`/etc/systemd/system/turkeydpi.service`):
+
+```ini
+[Unit]
+Description=TurkeyDPI DPI Bypass Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=turkeydpi
+ExecStart=/usr/local/bin/turkeydpi run --proxy --config /etc/turkeydpi/config.toml
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Manage with systemctl:
+
+```bash
+sudo systemctl enable turkeydpi
+sudo systemctl start turkeydpi
+sudo systemctl status turkeydpi
+```
+
+## Client Configuration
+
+### SOCKS5 Setup
+
+Configure applications to use SOCKS5 proxy at `127.0.0.1:1080`:
+
+<Tabs>
+  <Tab title="Firefox">
+    1. Settings → Network Settings → Settings
+    2. Select "Manual proxy configuration"
+    3. SOCKS Host: `127.0.0.1`, Port: `1080`
+    4. Select "SOCKS v5"
+    5. Check "Proxy DNS when using SOCKS v5"
+  </Tab>
+  
+  <Tab title="cURL">
+    ```bash
+    curl --socks5 127.0.0.1:1080 https://example.com
+    ```
+  </Tab>
+  
+  <Tab title="Environment">
+    ```bash
+    export ALL_PROXY=socks5://127.0.0.1:1080
+    ```
+  </Tab>
+</Tabs>
+
+## Performance Tuning
+
+### Configuration Options
+
+Adjust in config file:
+
+```toml
+[limits]
+max_flows = 10000          # Maximum concurrent flows
+max_queue_size = 1000      # Packet queue size
+max_memory_mb = 128        # Memory limit
+flow_timeout_secs = 120    # Flow idle timeout
+```
+
+### System Limits
+
+Increase file descriptor limits for high connection counts:
+
+```bash
+ulimit -n 65535
+```
+
+Or in `/etc/security/limits.conf`:
+```
+turkeydpi soft nofile 65535
+turkeydpi hard nofile 65535
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Socket already in use">
+    Remove stale socket file:
+    ```bash
+    rm /tmp/turkeydpi.sock
+    turkeydpi run --proxy
+    ```
+  </Accordion>
+  
+  <Accordion title="Proxy not accepting connections">
+    Check if --proxy flag is set and firewall allows connections:
+    ```bash
+    sudo ss -tlnp | grep 1080
+    sudo iptables -L -n | grep 1080
+    ```
+  </Accordion>
+  
+  <Accordion title="Configuration file not found">
+    Verify file path and permissions:
+    ```bash
+    ls -la /etc/turkeydpi/config.toml
+    turkeydpi validate /etc/turkeydpi/config.toml
+    ```
+  </Accordion>
+  
+  <Accordion title="High CPU usage">
+    Reduce fragmentation intensity in config or disable unnecessary transforms.
+  </Accordion>
+</AccordionGroup>
+
+## See Also
+
+- [bypass command](/commands/bypass) - Quick HTTP proxy mode
+- [Daemon Control Commands](/commands/daemon-control) - Managing the running daemon
+- [Configuration Management](/commands/config-management) - Validate and generate configs
+- [Configuration Guide](/usage/configuration) - Detailed configuration reference

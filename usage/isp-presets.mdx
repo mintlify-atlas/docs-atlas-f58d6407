@@ -1,0 +1,395 @@
+---
+title: 'ISP Presets'
+description: 'Pre-configured bypass settings for Turkish ISPs'
+icon: 'tower-cell'
+---
+
+## Overview
+
+TurkeyDPI includes four pre-configured presets optimized for different Turkish ISPs. Each preset uses specific fragmentation strategies and timing parameters to bypass DPI inspection.
+
+<Note>
+  **Quick recommendation:** Start with the `aggressive` preset. It works for most ISPs and situations.
+</Note>
+
+## Available Presets
+
+<Tabs>
+  <Tab title="Aggressive">
+    ### Aggressive (Recommended)
+    
+    The most comprehensive bypass configuration. Works with all Turkish ISPs.
+    
+    ```bash
+    turkeydpi bypass --preset aggressive
+    ```
+    
+    **Technical Details:**
+    
+    | Parameter | Value | Description |
+    |-----------|-------|-------------|
+    | `fragment_sni` | `true` | Fragment TLS ClientHello SNI extension |
+    | `tls_split_pos` | `0` | Split at SNI midpoint (dynamic) |
+    | `fragment_http_host` | `true` | Fragment HTTP Host header |
+    | `http_split_pos` | `1` | Split 1 byte into Host header |
+    | `send_fake_packets` | `false` | Don't send decoy packets |
+    | `fake_packet_ttl` | `3` | TTL for decoy packets (if enabled) |
+    | `fragment_delay_us` | `10000` | 10ms delay between fragments |
+    | `use_tcp_segmentation` | `true` | Force TCP segmentation |
+    | `min_segment_size` | `1` | Minimum TCP segment size |
+    | `max_segment_size` | `5` | Maximum 5 bytes per segment |
+    
+    **When to use:**
+    - First time using TurkeyDPI
+    - Multiple ISPs or unknown ISP
+    - Maximum compatibility needed
+    - Other presets don't work
+    
+    **Trade-offs:**
+    - Adds 10ms latency per fragment
+    - More CPU usage due to small segments
+    - Higher packet overhead
+  </Tab>
+  
+  <Tab title="Türk Telekom">
+    ### Türk Telekom
+    
+    Optimized for Türk Telekom's DPI infrastructure.
+    
+    ```bash
+    turkeydpi bypass --preset turk-telekom
+    ```
+    
+    **Technical Details:**
+    
+    | Parameter | Value | Description |
+    |-----------|-------|-------------|
+    | `fragment_sni` | `true` | Fragment TLS SNI |
+    | `tls_split_pos` | `2` | Split at byte 2 |
+    | `fragment_http_host` | `true` | Fragment HTTP Host |
+    | `http_split_pos` | `2` | Split at byte 2 |
+    | `send_fake_packets` | `false` | No decoy packets |
+    | `fake_packet_ttl` | `1` | |
+    | `fragment_delay_us` | `0` | No artificial delay |
+    | `use_tcp_segmentation` | `true` | TCP segmentation enabled |
+    | `min_segment_size` | `1` | |
+    | `max_segment_size` | `20` | Larger segments than aggressive |
+    
+    **Why this works for TT:**
+    
+    Türk Telekom's DPI inspects the first few bytes of TLS records. Splitting at byte 2 breaks the record header across packets:
+    
+    ```
+    Normal packet:  [16 03 03 00 xx 01 ...]
+                     ↑  ↑  ↑
+                     TLS handshake signature
+    
+    Split at 2:     [16 03] | [03 00 xx 01 ...]
+                     ↑           ↑
+                     Packet 1    Packet 2 - DPI can't classify
+    ```
+    
+    **Advantages:**
+    - No latency penalty (0μs delay)
+    - Lower overhead than aggressive
+    - Tested extensively on TT network
+    
+    **When to use:**
+    - You're on Türk Telekom network
+    - You want minimal latency
+  </Tab>
+  
+  <Tab title="Vodafone TR">
+    ### Vodafone Turkey
+    
+    Optimized for Vodafone Turkey's DPI systems.
+    
+    ```bash
+    turkeydpi bypass --preset vodafone
+    ```
+    
+    **Technical Details:**
+    
+    | Parameter | Value | Description |
+    |-----------|-------|-------------|
+    | `fragment_sni` | `true` | Fragment TLS SNI |
+    | `tls_split_pos` | `3` | Split at byte 3 |
+    | `fragment_http_host` | `true` | Fragment HTTP Host |
+    | `http_split_pos` | `3` | Split at byte 3 |
+    | `send_fake_packets` | `false` | No decoy packets |
+    | `fake_packet_ttl` | `1` | |
+    | `fragment_delay_us` | `100` | 100μs delay (0.1ms) |
+    | `use_tcp_segmentation` | `true` | TCP segmentation enabled |
+    | `min_segment_size` | `1` | |
+    | `max_segment_size` | `30` | Medium-sized segments |
+    
+    **Why this works for Vodafone:**
+    
+    Vodafone's DPI has short-term buffering that attempts to reassemble fragments. The 100μs delay is too short for full reassembly but long enough to evade detection:
+    
+    ```
+    [16 03 03] ──→ DPI buffer
+       ↓ 100μs wait
+    [00 xx 01 ...] ──→ Buffer incomplete, timeout
+    ```
+    
+    **Advantages:**
+    - Minimal latency impact (0.1ms)
+    - Defeats Vodafone's buffering
+    - Medium overhead
+    
+    **When to use:**
+    - You're on Vodafone Turkey network
+    - Balanced performance needed
+  </Tab>
+  
+  <Tab title="Superonline">
+    ### Superonline
+    
+    Optimized for Superonline's DPI infrastructure.
+    
+    ```bash
+    turkeydpi bypass --preset superonline
+    ```
+    
+    **Technical Details:**
+    
+    | Parameter | Value | Description |
+    |-----------|-------|-------------|
+    | `fragment_sni` | `true` | Fragment TLS SNI |
+    | `tls_split_pos` | `1` | Split at byte 1 (very early) |
+    | `fragment_http_host` | `true` | Fragment HTTP Host |
+    | `http_split_pos` | `1` | Split at byte 1 |
+    | `send_fake_packets` | `false` | No decoy packets |
+    | `fake_packet_ttl` | `1` | |
+    | `fragment_delay_us` | `0` | No delay |
+    | `use_tcp_segmentation` | `true` | TCP segmentation enabled |
+    | `min_segment_size` | `1` | |
+    | `max_segment_size` | `15` | Smallest segments |
+    
+    **Why this works for Superonline:**
+    
+    Superonline's DPI is particularly aggressive and checks record types early. Splitting at byte 1 breaks the content type detection:
+    
+    ```
+    Normal:     [16] [03 03 00 xx ...]
+                 ↑
+                 0x16 = TLS Handshake
+    
+    Split at 1: [16] | [03 03 00 xx ...]
+                 ↑       ↑
+                 Can't identify without next bytes
+    ```
+    
+    **Advantages:**
+    - Zero latency (no delays)
+    - Defeats early-stage classification
+    - Lower CPU usage than aggressive
+    
+    **When to use:**
+    - You're on Superonline network
+    - You need fast response times
+  </Tab>
+</Tabs>
+
+## How Presets Work
+
+### TLS Fragmentation
+
+All presets fragment TLS ClientHello packets. The key difference is **where** the split occurs:
+
+<CodeGroup>
+```text Aggressive (split_pos=0)
+Original: [TLS_Header][ClientHello][SNI:"discord.com"][Extensions]
+
+Fragmented:
+  [TLS_Hea]
+  [der][Cli]
+  [entHell]
+  [o][SNI:]
+  ["discor]
+  [d.com"]
+  [Extensi]
+  [ons]
+```
+
+```text Turk Telekom (split_pos=2)
+Original: [TLS_Header][ClientHello][SNI:"discord.com"][Extensions]
+
+Fragmented:
+  [16 03]  ← Packet 1: Just content type + version byte 1
+  [03 00 xx 01 00 ... "discord.com" ...]  ← Packet 2: Rest
+```
+
+```text Vodafone (split_pos=3)
+Original: [TLS_Header][ClientHello][SNI:"discord.com"][Extensions]
+
+Fragmented:
+  [16 03 03]  ← Packet 1: Content type + full version
+  [00 xx 01 00 ... "discord.com" ...]  ← Packet 2: Length + data
+```
+
+```text Superonline (split_pos=1)
+Original: [TLS_Header][ClientHello][SNI:"discord.com"][Extensions]
+
+Fragmented:
+  [16]  ← Packet 1: Just content type
+  [03 03 00 xx 01 00 ... "discord.com" ...]  ← Packet 2: Everything else
+```
+</CodeGroup>
+
+### HTTP Fragmentation
+
+Similarly, HTTP Host headers are fragmented:
+
+<CodeGroup>
+```text Aggressive (split_pos=1)
+GET / HTTP/1.1
+Host: d|iscord.com
+      ↑ split here
+```
+
+```text Other Presets (split_pos=1-3)
+GET / HTTP/1.1
+Host: dis|cord.com
+         ↑ split here (varies by preset)
+```
+</CodeGroup>
+
+## Choosing the Right Preset
+
+<Steps>
+  <Step title="Check your ISP">
+    Find out which ISP you're using:
+    
+    - Türk Telekom → use `turk-telekom`
+    - Vodafone Turkey → use `vodafone`
+    - Superonline → use `superonline`
+    - Other/Unknown → use `aggressive`
+  </Step>
+  
+  <Step title="Test the preset">
+    Start TurkeyDPI with your chosen preset:
+    
+    ```bash
+    turkeydpi bypass --preset <your-isp>
+    ```
+  </Step>
+  
+  <Step title="Verify it works">
+    Try accessing a blocked site. If it doesn't work:
+    
+    1. Try the `aggressive` preset
+    2. Enable verbose logging: `turkeydpi bypass --preset aggressive -v`
+    3. Check the troubleshooting section below
+  </Step>
+</Steps>
+
+## Preset Comparison
+
+| Preset | Latency | CPU Usage | Compatibility | Best For |
+|--------|---------|-----------|---------------|----------|
+| **Aggressive** | High (10ms) | High | Universal | Unknown ISP, maximum compatibility |
+| **Turk Telekom** | None | Low | TT-specific | Türk Telekom users |
+| **Vodafone** | Very Low (0.1ms) | Medium | VF-specific | Vodafone Turkey users |
+| **Superonline** | None | Low | SO-specific | Superonline users |
+
+<Warning>
+  **Performance tip:** ISP-specific presets are faster than `aggressive`. If you know your ISP, use its preset for better performance.
+</Warning>
+
+## Advanced: Creating Custom Presets
+
+If the built-in presets don't work, you can create custom configurations. See the [Configuration guide](/usage/configuration) for details.
+
+**Example custom config for testing:**
+
+```toml
+[global]
+enabled = true
+enable_fragmentation = true
+
+[[rules]]
+name = "custom-https"
+enabled = true
+priority = 100
+transforms = ["fragment"]
+
+[rules.match_criteria]
+dst_ports = [443]
+protocols = ["tcp"]
+
+[transforms.fragment]
+min_size = 1
+max_size = 15  # Adjust this value
+randomize = true
+```
+
+Then run:
+
+```bash
+turkeydpi run --proxy --config custom.toml
+```
+
+## Troubleshooting Presets
+
+### Preset not working
+
+1. **Verify the preset name:**
+   ```bash
+   # Valid presets:
+   turkeydpi bypass --preset aggressive
+   turkeydpi bypass --preset turk-telekom
+   turkeydpi bypass --preset vodafone
+   turkeydpi bypass --preset superonline
+   ```
+
+2. **Try aggressive preset:**
+   ```bash
+   turkeydpi bypass --preset aggressive
+   ```
+
+3. **Enable verbose logging:**
+   ```bash
+   turkeydpi bypass --preset aggressive -v
+   ```
+   Look for errors in the output.
+
+### Different ISP than expected
+
+Some users are on virtual ISPs that use another ISP's infrastructure:
+
+- **TTNet, TTNET** → Use `turk-telekom`
+- **Vodafone Red** → Use `vodafone`
+- **Superbox** → Use `superonline`
+
+If unsure, use `aggressive`.
+
+### Preset causes high latency
+
+The `aggressive` preset adds 10ms of artificial delay. To reduce latency:
+
+1. **Switch to ISP-specific preset:**
+   ```bash
+   turkeydpi bypass --preset turk-telekom  # 0ms delay
+   ```
+
+2. **Create custom config without delays:**
+   Edit `config.toml` and set:
+   ```toml
+   [transforms.jitter]
+   min_ms = 0
+   max_ms = 0
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/usage/configuration">
+    Learn how to create custom bypass configurations
+  </Card>
+  
+  <Card title="Basic Usage" icon="play" href="/usage/basic-usage">
+    Return to basic CLI usage guide
+  </Card>
+</CardGroup>

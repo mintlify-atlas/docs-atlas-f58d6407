@@ -1,0 +1,263 @@
+---
+title: Introduction to TurkeyDPI
+description: Anti-censorship bypass proxy for Turkish ISPs using packet fragmentation to evade DPI
+---
+
+# TurkeyDPI
+
+TurkeyDPI is a powerful DPI (Deep Packet Inspection) bypass tool specifically designed for Turkish ISPs. It uses advanced packet fragmentation techniques to evade SNI-based blocking and restore access to censored websites.
+
+## The Problem
+
+Turkish ISPs use Deep Packet Inspection to analyze your traffic and block access to certain websites. When you connect to blocked sites like `discord.com`, the DPI system reads the Server Name Indication (SNI) in plaintext during the TLS handshake:
+
+```
+Client → Server: TLS ClientHello
+  ├─ TLS Record Header: 16 03 03 [length]
+  ├─ Handshake Type: 01 (ClientHello)
+  ├─ Version, Random, Session ID...
+  └─ Extensions:
+       └─ SNI (type 0x0000): "discord.com"  ← DPI reads this
+```
+
+The DPI box sees `discord.com` in plaintext, matches it against a blocklist, and kills the connection.
+
+## The Solution
+
+TurkeyDPI exploits a fundamental property of TCP: it's a stream protocol. The server doesn't care if data arrives in one packet or twenty—it reassembles everything. But **DPI boxes are stateless** and inspect packets individually.
+
+### How Fragmentation Works
+
+<Steps>
+  <Step title="Detect TLS/HTTP Traffic">
+    TurkeyDPI identifies TLS ClientHello messages and HTTP requests containing SNI or Host headers.
+  </Step>
+  
+  <Step title="Fragment Packets">
+    The proxy splits packets at strategic positions to prevent DPI from extracting the hostname:
+    
+    ```
+    Normal:     [TLS Header + ClientHello + SNI "discord.com"] → DPI blocks
+    
+    Fragmented: [TLS Hea] [der + Cli] [entHello] [+ SNI "dis] [cord.com"]
+                    ↓
+                DPI sees 5 incomplete packets, can't extract SNI
+                    ↓
+                Server reassembles → valid TLS handshake
+    ```
+  </Step>
+  
+  <Step title="Add Timing Delays">
+    Optional delays between fragments (10-50ms) defeat DPI buffering attempts.
+  </Step>
+  
+  <Step title="Bypass DNS Blocking">
+    Uses DNS-over-HTTPS (DoH) to Cloudflare 1.1.1.1 for encrypted DNS resolution, preventing DNS poisoning.
+  </Step>
+</Steps>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="SNI Fragmentation" icon="shield-halved">
+    Splits TLS ClientHello packets to hide the Server Name Indication from DPI inspection.
+  </Card>
+  
+  <Card title="HTTP Host Fragmentation" icon="globe">
+    Fragments HTTP Host headers across multiple TCP segments to evade detection.
+  </Card>
+  
+  <Card title="ISP Presets" icon="tower-cell">
+    Pre-configured profiles optimized for Turk Telekom, Vodafone, and Superonline.
+  </Card>
+  
+  <Card title="DNS-over-HTTPS" icon="lock">
+    Encrypted DNS resolution through Cloudflare to bypass ISP DNS poisoning.
+  </Card>
+  
+  <Card title="Zero Configuration" icon="bolt">
+    Works out of the box with sensible defaults. Just run and set your browser proxy.
+  </Card>
+  
+  <Card title="High Performance" icon="gauge-high">
+    Written in Rust with async I/O for minimal latency and maximum throughput.
+  </Card>
+</CardGroup>
+
+## Bypass Techniques
+
+TurkeyDPI employs multiple evasion strategies:
+
+### 1. SNI Fragmentation
+
+Splits the TLS ClientHello at critical positions to prevent DPI from parsing the SNI extension:
+
+```rust
+// From: engine/src/bypass.rs:194
+if split_pos > 0 && split_pos < data.len() {
+    let segment_size = self.config.max_segment_size.max(1);
+    
+    if segment_size < split_pos {
+        // Fragment into multiple small segments
+        let mut pos = 0;
+        while pos < split_pos {
+            let end = (pos + segment_size).min(split_pos);
+            result.fragments.push(Bytes::copy_from_slice(&data[pos..end]));
+            pos = end;
+        }
+        result.fragments.push(Bytes::copy_from_slice(&data[split_pos..]));
+    }
+}
+```
+
+### 2. HTTP Host Header Fragmentation
+
+For plain HTTP traffic, splits the Host header value:
+
+```
+GET / HTTP/1.1
+Host: twit  →  [first packet]
+ter.com     →  [second packet]
+Connection: close
+```
+
+### 3. Timing Jitter
+
+Some DPI boxes buffer packets briefly hoping to reassemble. Adding delays defeats this:
+
+```
+[fragment 1] ──────────────────────────────→
+                wait 10ms
+             [fragment 2] ────────────────→
+                wait 10ms
+                          [fragment 3] ──→
+```
+
+### 4. DNS-over-HTTPS
+
+ISPs also poison DNS queries. TurkeyDPI uses encrypted DNS:
+
+```
+Normal:    DNS query for discord.com → ISP returns fake IP
+With DoH:  HTTPS POST to 1.1.1.1/dns-query → encrypted → real IP
+```
+
+## Quick Start
+
+Get started in under 60 seconds:
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install TurkeyDPI using Cargo or build from source
+  </Card>
+  
+  <Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+    Run your first bypass proxy and configure your browser
+  </Card>
+</CardGroup>
+
+## Architecture
+
+TurkeyDPI is built with a modular architecture:
+
+```
+cli/        CLI binary and command-line interface
+engine/     Core bypass logic and packet transforms
+backend/    Proxy server implementations (HTTP CONNECT, SOCKS5)
+control/    Daemon control and IPC
+```
+
+<Note>
+  TurkeyDPI is designed specifically for Turkish ISPs but the techniques work against any stateless DPI system that inspects individual packets.
+</Note>
+
+## How It Works - Deep Dive
+
+### TLS Record Structure
+
+Every TLS record follows this format:
+
+```
+Byte:   0      1-2     3-4      5+
+      ┌────┬────────┬────────┬─────────────────────┐
+      │ 16 │ 03 03  │ length │ Handshake data...   │
+      └────┴────────┴────────┴─────────────────────┘
+        │      │        │
+        │      │        └─ 2 bytes: record length
+        │      └─ TLS version (0x0303 = TLS 1.2)
+        └─ Content type (0x16 = Handshake)
+```
+
+The SNI extension sits inside the handshake data, typically 40-200 bytes in. TurkeyDPI parses the ClientHello to find the exact byte offset of the hostname, then strategically splits the packet.
+
+### Fragment Strategy
+
+The split point is critical. Turkish DPI specifically looks for:
+
+1. Content type `0x16` (handshake)
+2. Handshake type `0x01` (ClientHello)  
+3. SNI extension with readable hostname
+
+TurkeyDPI splits **before** the handshake type is visible:
+
+```
+Original:  [16] [03 03] [00 xx] [01 00 00 ... SNI ...]
+                                 ↑
+                                 Handshake type
+
+Split:     [16 03] [03 00 xx 01 00 ... SNI ...]
+               ↑
+               DPI never sees complete record header
+```
+
+Or splits the SNI hostname itself:
+
+```
+SNI field: [...] [00 0b] "discord.com" [...]
+                          ↓
+Split:     [...] [00 0b] "disc" | "ord.com" [...]
+```
+
+## ISP Presets
+
+TurkeyDPI includes optimized configurations for major Turkish ISPs. Each preset uses different fragmentation strategies:
+
+| Preset | TLS Split | Max Segment | Fragment Delay | Best For |
+|--------|-----------|-------------|----------------|----------|
+| `aggressive` | 0 (SNI middle) | 5 bytes | 10ms | Maximum bypass effectiveness |
+| `turk-telekom` | 2 bytes | 20 bytes | 0ms | Turk Telekom networks |
+| `vodafone` | 3 bytes | 30 bytes | 100μs | Vodafone Turkey |
+| `superonline` | 1 byte | 15 bytes | 0ms | Superonline ISP |
+
+## Why Rust?
+
+TurkeyDPI is written in Rust for:
+
+- **Performance**: Zero-cost abstractions and no garbage collection
+- **Safety**: Memory safety without runtime overhead
+- **Concurrency**: Tokio async runtime handles thousands of connections
+- **Reliability**: Type system catches bugs at compile time
+
+## License
+
+TurkeyDPI is open source under the MIT License.
+
+<Warning>
+  This tool is designed to restore access to legitimate services blocked by censorship. Always comply with local laws and use responsibly.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Install" icon="download" href="/installation">
+    Get TurkeyDPI installed on your system
+  </Card>
+  
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Run the bypass proxy in 60 seconds
+  </Card>
+  
+  <Card title="GitHub" icon="github" href="https://github.com/1etu/turkeydpi">
+    View source code and contribute
+  </Card>
+</CardGroup>

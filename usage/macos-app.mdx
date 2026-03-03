@@ -1,0 +1,570 @@
+---
+title: 'macOS App'
+description: 'Native macOS menu bar application for TurkeyDPI'
+icon: 'apple'
+---
+
+## Overview
+
+TurkeyDPI includes a native macOS app with a menu bar interface. It provides one-click proxy management without touching the command line.
+
+<Note>
+  The macOS app is a SwiftUI application that wraps the TurkeyDPI CLI engine. It offers the same functionality with a graphical interface.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Build the app">
+    Navigate to the app directory and run the build script:
+    
+    ```bash
+    cd TurkeyDPI-App
+    ./build.sh
+    ```
+    
+    This compiles the Swift app and bundles the TurkeyDPI engine.
+  </Step>
+  
+  <Step title="Open the app">
+    Launch the application:
+    
+    ```bash
+    open TurkeyDPI.app
+    ```
+    
+    Or drag `TurkeyDPI.app` to your Applications folder and launch it from there.
+  </Step>
+  
+  <Step title="Grant permissions">
+    macOS may ask for permissions:
+    
+    - **Network**: Required for the SOCKS proxy
+    - **System Proxy**: Required to automatically configure macOS proxy settings
+    
+    Click "Allow" for both prompts.
+  </Step>
+</Steps>
+
+## Features
+
+### Menu Bar Interface
+
+The app lives in your menu bar with a simple interface:
+
+- **Icon states:**
+  - ○ (Empty circle) - No proxies running
+  - ● (Filled circle) - At least one proxy running
+
+- **Menu:**
+  - List of configured proxies with status indicators
+  - Quick Start/Stop buttons
+  - Open main window
+  - Quit application
+
+### Main Window
+
+The main window provides full proxy management:
+
+<Tabs>
+  <Tab title="Proxy List">
+    **Sidebar** shows all configured proxies:
+    
+    - ● Green dot - Proxy running
+    - ○ Gray dot - Proxy stopped
+    - ◐ Orange dot - Proxy starting/stopping
+    - ● Red dot - Error state
+    
+    Each proxy shows:
+    - Name
+    - Port number (`:8844`)
+    
+    **Actions:**
+    - Click to select
+    - Right-click for context menu
+    - Click `+` to create new proxy
+  </Tab>
+  
+  <Tab title="Proxy Details">
+    Select a proxy to view:
+    
+    - **Status** (Running, Stopped, Starting, Error)
+    - **Configuration** (Name, Address, Port, Preset)
+    - **Real-time logs** with syntax highlighting
+    - **Statistics** (Connections, bytes transferred)
+    - **Start/Stop controls**
+  </Tab>
+  
+  <Tab title="Create Proxy">
+    Click the `+` button to create a new proxy configuration:
+    
+    **Fields:**
+    - **Name**: Human-readable identifier
+    - **Address**: Listen address (usually `127.0.0.1`)
+    - **Port**: Port number (default `8844`)
+    - **ISP Preset**: Choose from dropdown
+    - **Auto-start**: Launch on app startup
+    - **System proxy**: Automatically configure macOS proxy
+  </Tab>
+</Tabs>
+
+## Creating Your First Proxy
+
+<Steps>
+  <Step title="Open create dialog">
+    Click the `+` button in the sidebar, or press `⌘N`.
+  </Step>
+  
+  <Step title="Configure proxy">
+    Fill in the form:
+    
+    <CodeGroup>
+    ```text Basic Setup
+    Name: Discord Proxy
+    Address: 127.0.0.1
+    Port: 8844
+    ISP Preset: Aggressive
+    ☑ Set as system proxy
+    ☐ Start automatically
+    ```
+    
+    ```text Turk Telekom
+    Name: TT Proxy
+    Address: 127.0.0.1
+    Port: 8844
+    ISP Preset: Türk Telekom
+    ☑ Set as system proxy
+    ☑ Start automatically
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Create and start">
+    Click **Create**. The proxy appears in the sidebar.
+    
+    To start it:
+    - Click the proxy in the list
+    - Click **Start** button
+    - Or right-click → Start
+  </Step>
+</Steps>
+
+## ISP Preset Selector
+
+When creating a proxy, choose from these presets:
+
+<Tabs>
+  <Tab title="Aggressive">
+    **Display:** Aggressive
+    
+    **Description:** All techniques enabled
+    
+    **Use when:**
+    - You don't know your ISP
+    - Other presets don't work
+    - Maximum compatibility needed
+    
+    **Trade-offs:**
+    - Adds ~10ms latency
+    - Higher CPU usage
+  </Tab>
+  
+  <Tab title="Türk Telekom">
+    **Display:** Türk Telekom
+    
+    **Description:** Split at byte 2
+    
+    **Use when:**
+    - You're on Türk Telekom network
+    - You want minimal latency
+    
+    **Trade-offs:**
+    - Only optimized for TT
+  </Tab>
+  
+  <Tab title="Vodafone TR">
+    **Display:** Vodafone TR
+    
+    **Description:** Split at byte 3 with delay
+    
+    **Use when:**
+    - You're on Vodafone Turkey network
+    
+    **Trade-offs:**
+    - 0.1ms delay
+    - Medium CPU usage
+  </Tab>
+  
+  <Tab title="Superonline">
+    **Display:** Superonline
+    
+    **Description:** Split at byte 1
+    
+    **Use when:**
+    - You're on Superonline network
+    - You need fast response times
+    
+    **Trade-offs:**
+    - Only optimized for Superonline
+  </Tab>
+</Tabs>
+
+See [ISP Presets](/usage/isp-presets) for technical details.
+
+## System Proxy Integration
+
+The app can automatically configure macOS system proxy settings.
+
+### How it works
+
+When **"Set as system proxy"** is enabled:
+
+1. **On Start:** The app runs this command internally:
+   ```bash
+   networksetup -setsocksfirewallproxy Wi-Fi 127.0.0.1 8844
+   networksetup -setsocksfirewallproxystate Wi-Fi on
+   ```
+
+2. **On Stop:** The app disables the proxy:
+   ```bash
+   networksetup -setsocksfirewallproxystate Wi-Fi off
+   ```
+
+3. **On Quit:** All proxies are disabled:
+   ```bash
+   # Runs for all network interfaces
+   networksetup -setsocksfirewallproxystate Wi-Fi off
+   networksetup -setsocksfirewallproxystate Ethernet off
+   ```
+
+### Manual configuration
+
+If you prefer manual control, disable "Set as system proxy" and configure manually:
+
+<Steps>
+  <Step title="Open Network Preferences">
+    System Preferences → Network
+  </Step>
+  
+  <Step title="Select your connection">
+    Click Wi-Fi or Ethernet (whichever you're using)
+  </Step>
+  
+  <Step title="Configure proxy">
+    Click **Advanced** → **Proxies** tab
+    
+    Enable:
+    - ☑ **SOCKS Proxy**
+    
+    Enter:
+    - **SOCKS Proxy Server:** `127.0.0.1`
+    - **Port:** `8844` (or your custom port)
+  </Step>
+  
+  <Step title="Apply">
+    Click **OK** → **Apply**
+  </Step>
+</Steps>
+
+## Real-time Logs
+
+The app displays live logs from the TurkeyDPI engine:
+
+### Log Types
+
+<Accordion title="Info (Blue)">
+  Normal operational messages:
+  
+  ```
+  ℹ Starting proxy on 127.0.0.1:8844...
+  ℹ Proxy started successfully
+  ℹ System SOCKS proxy enabled
+  ```
+</Accordion>
+
+<Accordion title="Success (Green)">
+  Successful operations:
+  
+  ```
+  ✓ Proxy started successfully
+  ✓ Configuration loaded
+  ```
+</Accordion>
+
+<Accordion title="Warning (Orange)">
+  Non-critical issues:
+  
+  ```
+  ⚠ Warning: Could not enable system proxy
+  ⚠ High memory usage detected
+  ```
+</Accordion>
+
+<Accordion title="Error (Red)">
+  Critical errors:
+  
+  ```
+  ✗ Error: turkeydpi binary not found
+  ✗ Failed to start: Address already in use
+  ```
+</Accordion>
+
+<Accordion title="Debug (Gray)">
+  Verbose debug information:
+  
+  ```
+  🐜 DEBUG: Processing TLS ClientHello
+  🐜 TRACE: Fragment size: 5 bytes
+  ```
+</Accordion>
+
+### Log Features
+
+- **Auto-scroll:** Logs automatically scroll to newest entries
+- **Search:** Filter logs (future feature)
+- **Export:** Copy logs to clipboard
+- **Clear:** Right-click → Clear Logs
+
+## Managing Multiple Proxies
+
+The app supports multiple proxy configurations simultaneously.
+
+### Use Cases
+
+<CodeGroup>
+```text Different ISPs
+Proxy 1: "TT Proxy"    - Port 8844 - Türk Telekom preset
+Proxy 2: "VF Proxy"    - Port 8845 - Vodafone preset
+Proxy 3: "Backup"      - Port 8846 - Aggressive preset
+```
+
+```text Different Applications
+Proxy 1: "Discord"     - Port 8844 - Aggressive
+Proxy 2: "Twitter"     - Port 8845 - Turk Telekom
+Proxy 3: "General"     - Port 8846 - Vodafone
+```
+</CodeGroup>
+
+### Running Multiple Proxies
+
+1. **Create multiple configurations** with different ports
+2. **Start the ones you need**
+3. **Configure applications** to use different ports
+
+<Warning>
+  Only one proxy can use the system-wide proxy setting at a time. If multiple proxies have "Set as system proxy" enabled, the last one started will be active.
+</Warning>
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `⌘N` | Create new proxy |
+| `⌘W` | Close window |
+| `⌘Q` | Quit application |
+| `⌘,` | Preferences (future) |
+| `⌘R` | Refresh logs |
+
+## Context Menu Actions
+
+Right-click a proxy in the sidebar for quick actions:
+
+- **Start** - Start the proxy (if stopped)
+- **Stop** - Stop the proxy (if running)
+- **Clear Logs** - Clear log history
+- **Delete** - Remove the proxy configuration
+
+<Warning>
+  Deleting a proxy is permanent and cannot be undone. The proxy will be stopped if running.
+</Warning>
+
+## Application Lifecycle
+
+### Startup
+
+1. App checks for stale processes from previous crashes
+2. Kills any leftover `turkeydpi-engine` processes
+3. Loads saved proxy configurations from `UserDefaults`
+4. Auto-starts proxies with "Start automatically" enabled
+5. Shows main window and menu bar icon
+
+### During Use
+
+- Proxies run as child processes
+- Logs are captured in real-time
+- Status updates every second
+- System proxy settings are synchronized
+
+### Shutdown
+
+1. User clicks Quit (or `⌘Q`)
+2. App stops all running proxies
+3. System proxies are disabled for all interfaces
+4. Proxy configurations are saved to `UserDefaults`
+5. All child processes are terminated
+6. App exits
+
+<Note>
+  If the app crashes, stale processes are automatically cleaned up on next launch.
+</Note>
+
+## Troubleshooting
+
+### App won't start
+
+1. **Check for existing processes:**
+   ```bash
+   pkill -9 -f turkeydpi-engine
+   ```
+
+2. **Verify binary location:**
+   The app looks for the binary in these locations:
+   ```
+   TurkeyDPI.app/Contents/MacOS/turkeydpi-engine
+   TurkeyDPI.app/Contents/Resources/turkeydpi-engine
+   /usr/local/bin/turkeydpi
+   /opt/homebrew/bin/turkeydpi
+   ~/.cargo/bin/turkeydpi
+   ```
+
+3. **Rebuild the app:**
+   ```bash
+   cd TurkeyDPI-App
+   ./build.sh
+   ```
+
+### Proxy fails to start
+
+**Error: "turkeydpi binary not found"**
+
+The app can't find the CLI binary. Make sure you:
+1. Built the app with `./build.sh`
+2. Or installed the CLI: `cargo install --path cli`
+
+**Error: "Address already in use"**
+
+Another process is using the port. Either:
+- Change the port number in proxy configuration
+- Stop the other process:
+  ```bash
+  lsof -ti:8844 | xargs kill -9
+  ```
+
+**Error: "Permission denied"**
+
+The app needs network permissions. Go to:
+```
+System Preferences → Security & Privacy → Firewall → Firewall Options
+```
+Ensure TurkeyDPI is allowed.
+
+### System proxy not setting
+
+If the proxy doesn't enable automatically:
+
+1. **Check permissions:**
+   The app may need administrator access for `networksetup` commands.
+
+2. **Disable and re-enable:**
+   Uncheck "Set as system proxy", stop the proxy, then re-enable and start.
+
+3. **Set manually:**
+   Disable automatic setting and configure manually in System Preferences.
+
+### Logs not showing
+
+If logs are empty:
+
+1. **Check if proxy is running:**
+   Green dot should be visible next to proxy name.
+
+2. **Enable verbose mode:**
+   Edit the app code to add `-v` flag (advanced users only).
+
+3. **Check console:**
+   Open Console.app and filter for "turkeydpi" to see system logs.
+
+## Technical Details
+
+### Architecture
+
+```
+┌─────────────────────────────────────┐
+│         SwiftUI App                  │
+│  ┌─────────────┐  ┌──────────────┐  │
+│  │  MenuBar    │  │  Main Window │  │
+│  │  Controls   │  │  Management  │  │
+│  └──────┬──────┘  └──────┬───────┘  │
+│         │                │          │
+│         └────────┬───────┘          │
+│                  │                  │
+│           ┌──────▼──────┐           │
+│           │  AppState   │           │
+│           │  (Swift)    │           │
+│           └──────┬──────┘           │
+└──────────────────┼──────────────────┘
+                   │ Process management
+                   │ Pipe I/O
+          ┌────────▼────────┐
+          │  turkeydpi CLI  │
+          │  (Rust binary)  │
+          └────────┬────────┘
+                   │
+          ┌────────▼────────┐
+          │  SOCKS Proxy    │
+          │  DPI Bypass     │
+          └─────────────────┘
+```
+
+### Data Persistence
+
+Proxy configurations are stored in `UserDefaults`:
+
+```swift
+// Saved data structure
+struct ContainerConfig: Codable {
+    var id: UUID
+    var name: String
+    var listenAddress: String
+    var listenPort: Int
+    var preset: ISPPreset
+    var autoStart: Bool
+    var enableSystemProxy: Bool
+}
+```
+
+Key: `savedContainers`
+
+Format: JSON array of `ContainerConfig` objects
+
+### Binary Execution
+
+The app spawns the CLI as a child process:
+
+```swift
+let process = Process()
+process.executableURL = URL(fileURLWithPath: binaryPath)
+process.arguments = [
+    "bypass",
+    "-l", "127.0.0.1:8844",
+    "--preset", "aggressive"
+]
+```
+
+Stdout and stderr are captured via `Pipe` objects and displayed in real-time.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Basic Usage" icon="play" href="/usage/basic-usage">
+    Learn about the CLI interface
+  </Card>
+  
+  <Card title="ISP Presets" icon="tower-cell" href="/usage/isp-presets">
+    Understand preset configurations in detail
+  </Card>
+  
+  <Card title="Configuration" icon="gear" href="/usage/configuration">
+    Advanced configuration options
+  </Card>
+</CardGroup>

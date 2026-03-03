@@ -1,0 +1,198 @@
+---
+title: 'Padding Transform'
+description: 'Add padding bytes to packets to obscure traffic patterns'
+---
+
+## Overview
+
+The Padding transform adds extra bytes to packets to obscure their true size and defeat size-based traffic analysis. Padding can be either fixed-value bytes or pseudo-random data.
+
+## Structure
+
+```rust
+pub struct PaddingTransform {
+    params: PaddingParams,
+}
+```
+
+## Configuration
+
+<ParamField path="min_bytes" type="usize" default="0" required>
+  Minimum number of padding bytes to add. When `min_bytes` equals `max_bytes`, a fixed amount of padding is added.
+</ParamField>
+
+<ParamField path="max_bytes" type="usize" default="64" required>
+  Maximum number of padding bytes to add. The actual padding size will vary pseudo-randomly between `min_bytes` and `max_bytes`.
+  
+  Must not exceed 1500 bytes (MTU limit).
+</ParamField>
+
+<ParamField path="fill_byte" type="Option<u8>" default="None">
+  When set, all padding bytes will be this specific value. When `None`, padding is filled with pseudo-random bytes using a linear congruential generator.
+</ParamField>
+
+## Methods
+
+### new
+
+```rust
+pub fn new(params: &PaddingParams) -> Self
+```
+
+Creates a new Padding transform with the specified parameters.
+
+### calculate_padding_size
+
+```rust
+fn calculate_padding_size(&self, seed: u64) -> usize
+```
+
+Calculates the padding size for the current packet using a seed derived from packet count and data length.
+
+**Returns:** Padding size in bytes between `min_bytes` and `max_bytes`.
+
+### generate_padding
+
+```rust
+fn generate_padding(&self, size: usize, seed: u64) -> Vec<u8>
+```
+
+Generates padding bytes of the specified size.
+
+**Returns:** Vector of padding bytes, either all `fill_byte` or pseudo-random data.
+
+### apply
+
+```rust
+fn apply(&self, ctx: &mut FlowContext<'_>, data: &mut BytesMut) -> Result<TransformResult>
+```
+
+Appends padding to the packet data.
+
+**Returns:** `TransformResult::Continue` (padding doesn't fragment packets).
+
+## Behavior
+
+- If `max_bytes` is 0, no padding is added
+- Padding size is calculated pseudo-randomly based on packet count and data length
+- When `fill_byte` is specified, all padding uses that value (e.g., 0x00, 0xFF)
+- When `fill_byte` is `None`, padding uses pseudo-random bytes generated via LCG algorithm
+- Padding is appended to the end of the packet
+- Original packet data is preserved at the beginning
+
+## Example Configuration
+
+### Fixed padding with zeros
+
+```json
+{
+  "padding": {
+    "min_bytes": 10,
+    "max_bytes": 10,
+    "fill_byte": 0
+  }
+}
+```
+
+Adds exactly 10 null bytes to every packet.
+
+### Variable random padding
+
+```json
+{
+  "padding": {
+    "min_bytes": 5,
+    "max_bytes": 15,
+    "fill_byte": null
+  }
+}
+```
+
+Adds between 5 and 15 pseudo-random padding bytes.
+
+### No padding
+
+```json
+{
+  "padding": {
+    "min_bytes": 0,
+    "max_bytes": 0
+  }
+}
+```
+
+## Code Example
+
+From padding.rs:129:
+
+```rust
+#[test]
+fn test_padding_fixed_size() {
+    let params = PaddingParams {
+        min_bytes: 10,
+        max_bytes: 10,
+        fill_byte: Some(0xAB),
+    };
+    let transform = PaddingTransform::new(&params);
+    
+    let key = test_flow_key();
+    let mut state = FlowState::new(key);
+    let mut ctx = FlowContext::new(&key, &mut state, None);
+    let original = b"test data";
+    let mut data = BytesMut::from(&original[..]);
+
+    let result = transform.apply(&mut ctx, &mut data).unwrap();
+    assert_eq!(result, TransformResult::Continue);
+    assert_eq!(data.len(), original.len() + 10);
+    
+    // Verify padding bytes
+    for i in original.len()..data.len() {
+        assert_eq!(data[i], 0xAB);
+    }
+}
+```
+
+## Random Fill Algorithm
+
+From padding.rs:34:
+
+```rust
+fn generate_padding(&self, size: usize, seed: u64) -> Vec<u8> {
+    match self.params.fill_byte {
+        Some(byte) => vec![byte; size],
+        None => {
+            // Linear congruential generator
+            let mut padding = Vec::with_capacity(size);
+            let mut value = seed;
+            for _ in 0..size {
+                value = value.wrapping_mul(1103515245).wrapping_add(12345);
+                padding.push((value >> 16) as u8);
+            }
+            padding
+        }
+    }
+}
+```
+
+The LCG uses standard POSIX constants for pseudo-random byte generation.
+
+## Validation
+
+From config.rs:100-105:
+
+```rust
+if self.transforms.padding.max_bytes > 1500 {
+    return Err(EngineError::validation(
+        "transforms.padding.max_bytes",
+        "exceeds MTU (1500 bytes)",
+    ));
+}
+```
+
+Padding is limited to 1500 bytes to prevent exceeding the maximum transmission unit.
+
+## Use Cases
+
+- **Traffic obfuscation:** Hide true packet sizes from traffic analysis
+- **Pattern disruption:** Break size-based traffic fingerprinting
+- **Protocol mimicry:** Pad packets to match expected protocol sizes

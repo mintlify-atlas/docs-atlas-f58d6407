@@ -1,0 +1,387 @@
+---
+title: 'How TurkeyDPI Works'
+description: 'Deep dive into the architecture and bypass mechanisms of TurkeyDPI'
+---
+
+## Overview
+
+TurkeyDPI bypasses Deep Packet Inspection (DPI) systems used by Turkish ISPs by exploiting a fundamental asymmetry: TCP is a stream protocol that reassembles data regardless of packet boundaries, but DPI boxes inspect packets individually and are typically stateless.
+
+## The Problem: DPI-Based Blocking
+
+### What DPI Sees
+
+When you connect to a blocked website like `discord.com`, the TLS handshake contains identifying information in plaintext:
+
+```
+Client → Server: TLS ClientHello
+  ├─ TLS Record Header: 16 03 03 [length]
+  ├─ Handshake Type: 01 (ClientHello)
+  ├─ Version, Random, Session ID...
+  └─ Extensions:
+       └─ SNI (type 0x0000): "discord.com"  ← DPI reads this
+```
+
+The Server Name Indication (SNI) extension contains the hostname in plaintext. DPI boxes:
+1. Look for TLS Handshake records (content type `0x16`)
+2. Identify ClientHello messages (handshake type `0x01`)
+3. Extract the SNI extension
+4. Match the hostname against a blocklist
+5. Kill the connection if there's a match
+
+### HTTP Host Headers
+
+For unencrypted HTTP traffic, the situation is even simpler:
+
+```http
+GET / HTTP/1.1
+Host: twitter.com    ← DPI reads this
+Connection: close
+```
+
+The `Host` header is visible plaintext, making detection trivial.
+
+## The Solution: Packet Fragmentation
+
+### TCP Stream Reassembly
+
+TCP guarantees that data arrives in order and complete, regardless of how it's split across packets. The server's TCP stack reassembles fragments before passing data to the application layer.
+
+**This creates our exploit window**: the server sees valid data, but DPI sees incomplete packets.
+
+```
+Normal:     [TLS Header + ClientHello + SNI "discord.com"] → DPI blocks
+
+Fragmented: [TLS Hea] [der + Cli] [entHello] [+ SNI "dis] [cord.com"]
+                ↓
+            DPI sees 5 incomplete packets, can't extract SNI
+                ↓
+            Server reassembles → valid TLS handshake ✓
+```
+
+## Architecture
+
+### Core Components
+
+<Info>
+TurkeyDPI operates as a local HTTP/HTTPS proxy on `127.0.0.1:8844` that intercepts outgoing connections and applies bypass transforms.
+</Info>
+
+```rust
+// From engine/src/bypass.rs:138-145
+pub struct BypassEngine {
+    config: BypassConfig,
+}
+
+impl BypassEngine {
+    pub fn process_outgoing(&self, data: &[u8]) -> BypassResult {
+        // Protocol detection and transformation
+    }
+}
+```
+
+The engine processes every outgoing packet through these stages:
+
+1. **Protocol Detection** - Identify TLS ClientHello or HTTP requests
+2. **Parsing** - Extract SNI offset from TLS or Host header from HTTP
+3. **Fragmentation** - Split packets at strategic points
+4. **Timing** - Apply optional delays between fragments
+
+### Detection Logic
+
+The engine uses byte-level inspection to identify protocols:
+
+```rust
+// From engine/src/tls.rs:198-216
+pub fn is_client_hello(data: &[u8]) -> bool {
+    if data.len() < 6 {
+        return false;
+    }
+    
+    // Check for TLS Handshake content type (0x16)
+    if data[0] != TLS_HANDSHAKE {
+        return false;
+    }
+    
+    // Verify TLS version (0x0301-0x0304)
+    if data[1] != 0x03 || data[2] > 0x04 {
+        return false;
+    }
+    
+    // Check handshake type is ClientHello (0x01)
+    if data[5] != HANDSHAKE_CLIENT_HELLO {
+        return false;
+    }
+    
+    true
+}
+```
+
+### Processing Pipeline
+
+<Tabs>
+  <Tab title="TLS ClientHello">
+    When a TLS ClientHello is detected:
+
+    ```rust
+    // From engine/src/bypass.rs:165-224
+    fn process_tls_client_hello(&self, data: &[u8], result: &mut BypassResult) {
+        if let Some(info) = parse_client_hello(data) {
+            result.hostname = info.sni_hostname.clone();
+            
+            // Calculate split position
+            let split_pos = if self.config.tls_split_pos > 0 {
+                // Fixed position in TLS record header
+                self.config.tls_split_pos.min(data.len() - 1)
+            } else if let (Some(sni_off), Some(sni_len)) = 
+                      (info.sni_offset, info.sni_length) {
+                // Split hostname in half
+                if sni_len > 2 {
+                    sni_off + (sni_len / 2)
+                } else {
+                    sni_off
+                }.min(data.len() - 1)
+            } else {
+                5.min(data.len() - 1)
+            };
+            
+            // Create fragments
+            result.fragments.push(Bytes::copy_from_slice(&data[..split_pos]));
+            result.fragments.push(Bytes::copy_from_slice(&data[split_pos..]));
+            result.modified = true;
+        }
+    }
+    ```
+
+    The split position can be:
+    - **Header split** (`tls_split_pos=2`): Break the TLS record header itself
+    - **SNI split** (`tls_split_pos=0`): Break within the hostname string
+  </Tab>
+
+  <Tab title="HTTP Request">
+    For HTTP requests with Host headers:
+
+    ```rust
+    // From engine/src/bypass.rs:232-266
+    fn process_http_request(&self, data: &[u8], result: &mut BypassResult) {
+        if let Some((host_offset, host_len)) = find_http_host(data) {
+            result.hostname = std::str::from_utf8(
+                &data[host_offset..host_offset + host_len]
+            ).ok().map(|s| s.to_string());
+            
+            if let Some(host_header_pos) = find_host_header_start(data) {
+                let split_pos = (host_header_pos + self.config.http_split_pos)
+                    .min(data.len() - 1);
+                
+                result.fragments.push(
+                    Bytes::copy_from_slice(&data[..split_pos])
+                );
+                result.fragments.push(
+                    Bytes::copy_from_slice(&data[split_pos..])
+                );
+                result.modified = true;
+            }
+        }
+    }
+    ```
+
+    This splits the HTTP request mid-header:
+    ```
+    GET / HTTP/1.1
+    Host: twit  →  [packet 1]
+    ter.com     →  [packet 2]
+    ```
+  </Tab>
+</Tabs>
+
+## ISP-Specific Presets
+
+Different ISPs use different DPI systems with varying capabilities. TurkeyDPI includes tuned presets:
+
+<Accordion title="Turk Telekom">
+  ```rust
+  // From engine/src/bypass.rs:47-60
+  pub fn turk_telekom() -> Self {
+      Self {
+          fragment_sni: true,
+          tls_split_pos: 2,          // Split at byte 2 of TLS header
+          fragment_http_host: true,
+          http_split_pos: 2,
+          send_fake_packets: false,
+          fake_packet_ttl: 1,
+          fragment_delay_us: 0,      // No timing delays needed
+          use_tcp_segmentation: true,
+          min_segment_size: 1,
+          max_segment_size: 20,      // Small 20-byte chunks
+      }
+  }
+  ```
+
+  Turk Telekom's DPI can be defeated with simple header-level fragmentation without timing delays.
+</Accordion>
+
+<Accordion title="Vodafone TR">
+  ```rust
+  // From engine/src/bypass.rs:62-75
+  pub fn vodafone_tr() -> Self {
+      Self {
+          fragment_sni: true,
+          tls_split_pos: 3,
+          fragment_http_host: true,
+          http_split_pos: 3,
+          send_fake_packets: false,
+          fake_packet_ttl: 1,
+          fragment_delay_us: 100,    // 100μs delay between fragments
+          use_tcp_segmentation: true,
+          min_segment_size: 1,
+          max_segment_size: 30,
+      }
+  }
+  ```
+
+  Vodafone requires timing delays, suggesting their DPI attempts short-term buffering for reassembly.
+</Accordion>
+
+<Accordion title="Superonline">
+  ```rust
+  // From engine/src/bypass.rs:77-90
+  pub fn superonline() -> Self {
+      Self {
+          fragment_sni: true,
+          tls_split_pos: 1,          // Very early split
+          fragment_http_host: true,
+          http_split_pos: 1,
+          send_fake_packets: false,
+          fake_packet_ttl: 1,
+          fragment_delay_us: 0,
+          use_tcp_segmentation: true,
+          min_segment_size: 1,
+          max_segment_size: 15,      // Very small 15-byte chunks
+      }
+  }
+  ```
+
+  Superonline needs very aggressive fragmentation with tiny chunk sizes.
+</Accordion>
+
+<Accordion title="Aggressive (Universal)">
+  ```rust
+  // From engine/src/bypass.rs:92-105
+  pub fn aggressive() -> Self {
+      Self {
+          fragment_sni: true,
+          tls_split_pos: 0,          // SNI hostname split
+          fragment_http_host: true,
+          http_split_pos: 1,
+          send_fake_packets: false,
+          fake_packet_ttl: 3,
+          fragment_delay_us: 10000,  // 10ms delays
+          use_tcp_segmentation: true,
+          min_segment_size: 1,
+          max_segment_size: 5,       // Extreme: 5-byte max
+      }
+  }
+  ```
+
+  Maximum fragmentation with significant timing delays. Works against most DPI systems but may impact connection speed.
+</Accordion>
+
+## Configuration Parameters
+
+```rust
+// From engine/src/bypass.rs:7-27
+pub struct BypassConfig {
+    pub fragment_sni: bool,           // Enable TLS SNI fragmentation
+    pub tls_split_pos: usize,         // Where to split TLS (0=SNI, >0=header)
+    pub fragment_http_host: bool,     // Enable HTTP Host fragmentation
+    pub http_split_pos: usize,        // Offset into Host header
+    pub send_fake_packets: bool,      // Send decoy packets
+    pub fake_packet_ttl: u8,          // TTL for fake packets (dies before DPI)
+    pub fragment_delay_us: u64,       // Microseconds between fragments
+    pub use_tcp_segmentation: bool,   // Use TCP-level segmentation
+    pub min_segment_size: usize,      // Minimum fragment size
+    pub max_segment_size: usize,      // Maximum fragment size
+}
+```
+
+<Note>
+**Why different strategies work**: DPI systems vary in sophistication. Some only inspect the first packet, others buffer briefly for reassembly, and some have size-based heuristics. The presets are empirically tuned against real ISP infrastructure.
+</Note>
+
+## Why This Works
+
+### DPI Limitations
+
+1. **Statelessness**: Tracking TCP state for millions of connections is expensive. Most DPI boxes inspect packets independently.
+
+2. **Performance constraints**: Buffering and reassembling every TCP stream would require massive memory and processing power.
+
+3. **First-packet inspection**: Many systems only inspect initial packets to minimize performance impact.
+
+4. **Timeout windows**: If buffering is used, it's time-limited. Delays between fragments cause the buffer to expire before reassembly completes.
+
+### Server Tolerance
+
+Legitimate servers handle fragmented packets gracefully:
+- TCP stack reassembles automatically
+- No application-level changes needed
+- TLS libraries accept ClientHello regardless of packet boundaries
+- HTTP parsers are line-buffered and handle split headers
+
+<Info>
+The entire bypass is transparent to both the client application and the destination server. Only the network path sees the fragmented packets.
+</Info>
+
+## Verification
+
+The engine includes comprehensive tests that verify:
+
+```rust
+// From engine/src/bypass.rs:321-339
+#[test]
+fn test_bypass_tls() {
+    let engine = BypassEngine::new(BypassConfig::default());
+    let data = sample_tls_client_hello();
+    
+    let result = engine.process_outgoing(&data);
+    
+    assert!(result.modified);
+    assert_eq!(result.protocol, DetectedProtocol::TlsClientHello);
+    assert!(result.fragments.len() >= 2);
+    assert_eq!(result.hostname.as_deref(), Some("discord.com"));
+    
+    // Critical: verify reassembly produces original data
+    let mut reassembled = Vec::new();
+    for frag in &result.fragments {
+        reassembled.extend_from_slice(frag);
+    }
+    assert_eq!(reassembled, data);
+}
+```
+
+Reassembly must produce byte-identical data, otherwise TLS handshakes will fail.
+
+## Performance Impact
+
+<Accordion title="Minimal overhead">
+  - Parsing happens once per connection (ClientHello)
+  - Fragmentation is simple byte slicing
+  - No cryptographic operations
+  - Delays (when used) are only applied to initial handshake packets
+  
+  Typical overhead: &lt;1ms per connection establishment
+</Accordion>
+
+<Accordion title="When delays are used">
+  The `fragment_delay_us` parameter adds measurable latency:
+  - 100μs: Imperceptible
+  - 10ms (aggressive): Noticeable but acceptable
+  
+  Delays only affect connection setup, not data transfer.
+</Accordion>
+
+## See Also
+
+- [DPI Evasion Techniques](/technical/dpi-evasion) - Detailed bypass strategies
+- [Packet Fragmentation](/technical/packet-fragmentation) - Implementation deep dive
+- [DNS Bypass](/technical/dns-bypass) - DoH resolver architecture

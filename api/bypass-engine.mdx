@@ -1,0 +1,379 @@
+---
+title: 'BypassEngine'
+description: 'DPI bypass engine for fragmenting TLS and HTTP traffic'
+---
+
+## Overview
+
+The `BypassEngine` is the core component responsible for detecting and fragmenting TLS ClientHello and HTTP request packets to bypass deep packet inspection (DPI). It supports ISP-specific presets and customizable fragmentation strategies.
+
+## BypassEngine
+
+### Constructor
+
+```rust
+pub fn new(config: BypassConfig) -> Self
+```
+
+Creates a new bypass engine with the specified configuration.
+
+<ParamField path="config" type="BypassConfig" required>
+  Configuration for the bypass engine
+</ParamField>
+
+<ResponseField name="BypassEngine" type="BypassEngine">
+  New instance of the bypass engine
+</ResponseField>
+
+### Methods
+
+#### process_outgoing
+
+```rust
+pub fn process_outgoing(&self, data: &[u8]) -> BypassResult
+```
+
+Processes outgoing packet data, detecting protocol and applying fragmentation if applicable.
+
+<ParamField path="data" type="&[u8]" required>
+  Raw packet data to process
+</ParamField>
+
+<ResponseField name="BypassResult" type="BypassResult">
+  Result containing fragments, delays, and metadata
+</ResponseField>
+
+**Example:**
+
+```rust
+use turkey_dpi_engine::{BypassEngine, BypassConfig};
+
+let engine = BypassEngine::new(BypassConfig::default());
+let packet = b"\x16\x03\x01...";
+
+let result = engine.process_outgoing(packet);
+
+if result.modified {
+    println!("Protocol: {:?}", result.protocol);
+    println!("Hostname: {:?}", result.hostname);
+    println!("Fragments: {}", result.fragments.len());
+    
+    // Send fragments with delay
+    for fragment in result.fragments {
+        send_packet(&fragment);
+        if let Some(delay) = result.inter_fragment_delay {
+            thread::sleep(delay);
+        }
+    }
+    
+    // Send fake packet if configured
+    if let Some(fake) = result.fake_packet {
+        send_with_ttl(&fake, 1);
+    }
+}
+```
+
+## BypassConfig
+
+### Structure
+
+```rust
+pub struct BypassConfig {
+    pub fragment_sni: bool,
+    pub tls_split_pos: usize,
+    pub fragment_http_host: bool,
+    pub http_split_pos: usize,
+    pub send_fake_packets: bool,
+    pub fake_packet_ttl: u8,
+    pub fragment_delay_us: u64,
+    pub use_tcp_segmentation: bool,
+    pub min_segment_size: usize,
+    pub max_segment_size: usize,
+}
+```
+
+### Fields
+
+<ParamField path="fragment_sni" type="bool" default="true">
+  Enable SNI fragmentation for TLS ClientHello packets
+</ParamField>
+
+<ParamField path="tls_split_pos" type="usize" default="3">
+  Position to split TLS ClientHello (0 = split at SNI midpoint)
+</ParamField>
+
+<ParamField path="fragment_http_host" type="bool" default="true">
+  Enable fragmentation of HTTP Host header
+</ParamField>
+
+<ParamField path="http_split_pos" type="usize" default="2">
+  Offset from Host header start to split HTTP requests
+</ParamField>
+
+<ParamField path="send_fake_packets" type="bool" default="false">
+  Send fake packets with corrupted SNI before real packets
+</ParamField>
+
+<ParamField path="fake_packet_ttl" type="u8" default="1">
+  TTL for fake packets (should expire before reaching destination)
+</ParamField>
+
+<ParamField path="fragment_delay_us" type="u64" default="0">
+  Microseconds to delay between sending fragments
+</ParamField>
+
+<ParamField path="use_tcp_segmentation" type="bool" default="true">
+  Use TCP segmentation for initial fragment
+</ParamField>
+
+<ParamField path="min_segment_size" type="usize" default="1">
+  Minimum TCP segment size for fragmentation
+</ParamField>
+
+<ParamField path="max_segment_size" type="usize" default="40">
+  Maximum TCP segment size for first fragment
+</ParamField>
+
+### ISP Presets
+
+#### Default
+
+```rust
+let config = BypassConfig::default();
+```
+
+General-purpose configuration suitable for most scenarios.
+
+#### Turk Telekom
+
+```rust
+let config = BypassConfig::turk_telekom();
+```
+
+Optimized preset for Turk Telekom DPI systems.
+
+**Configuration:**
+- `tls_split_pos`: 2
+- `http_split_pos`: 2
+- `max_segment_size`: 20
+
+#### Vodafone TR
+
+```rust
+let config = BypassConfig::vodafone_tr();
+```
+
+Optimized for Vodafone Turkey network.
+
+**Configuration:**
+- `tls_split_pos`: 3
+- `http_split_pos`: 3
+- `fragment_delay_us`: 100
+- `max_segment_size`: 30
+
+#### Superonline
+
+```rust
+let config = BypassConfig::superonline();
+```
+
+Optimized for Superonline ISP.
+
+**Configuration:**
+- `tls_split_pos`: 1
+- `http_split_pos`: 1
+- `max_segment_size`: 15
+
+#### Aggressive
+
+```rust
+let config = BypassConfig::aggressive();
+```
+
+Maximum fragmentation for stubborn DPI systems.
+
+**Configuration:**
+- `tls_split_pos`: 0 (splits at SNI midpoint)
+- `http_split_pos`: 1
+- `fragment_delay_us`: 10000 (10ms)
+- `max_segment_size`: 5
+
+**Example:**
+
+```rust
+use turkey_dpi_engine::BypassConfig;
+
+// Use ISP-specific preset
+let config = BypassConfig::turk_telekom();
+
+// Or create custom configuration
+let custom = BypassConfig {
+    fragment_sni: true,
+    tls_split_pos: 2,
+    fragment_http_host: true,
+    http_split_pos: 3,
+    send_fake_packets: false,
+    fake_packet_ttl: 1,
+    fragment_delay_us: 500,
+    use_tcp_segmentation: true,
+    min_segment_size: 1,
+    max_segment_size: 25,
+};
+```
+
+## BypassResult
+
+### Structure
+
+```rust
+pub struct BypassResult {
+    pub fragments: Vec<Bytes>,
+    pub inter_fragment_delay: Option<Duration>,
+    pub fake_packet: Option<Bytes>,
+    pub modified: bool,
+    pub protocol: DetectedProtocol,
+    pub hostname: Option<String>,
+}
+```
+
+### Fields
+
+<ResponseField name="fragments" type="Vec<Bytes>">
+  Packet fragments to send (in order)
+</ResponseField>
+
+<ResponseField name="inter_fragment_delay" type="Option<Duration>">
+  Delay to insert between sending fragments
+</ResponseField>
+
+<ResponseField name="fake_packet" type="Option<Bytes>">
+  Fake packet with corrupted SNI (send first with low TTL)
+</ResponseField>
+
+<ResponseField name="modified" type="bool">
+  Whether the packet was fragmented (false = passthrough)
+</ResponseField>
+
+<ResponseField name="protocol" type="DetectedProtocol">
+  Detected protocol: `TlsClientHello`, `HttpRequest`, or `Unknown`
+</ResponseField>
+
+<ResponseField name="hostname" type="Option<String>">
+  Extracted hostname from SNI or Host header
+</ResponseField>
+
+**Example:**
+
+```rust
+let result = engine.process_outgoing(packet_data);
+
+match result.protocol {
+    DetectedProtocol::TlsClientHello => {
+        println!("TLS handshake to: {:?}", result.hostname);
+    }
+    DetectedProtocol::HttpRequest => {
+        println!("HTTP request to: {:?}", result.hostname);
+    }
+    DetectedProtocol::Unknown => {
+        // Packet passed through unmodified
+    }
+}
+
+// Check if packet was fragmented
+if result.modified {
+    assert!(result.fragments.len() >= 2);
+}
+```
+
+## DetectedProtocol
+
+### Enum
+
+```rust
+pub enum DetectedProtocol {
+    TlsClientHello,
+    HttpRequest,
+    Unknown,
+}
+```
+
+<ResponseField name="TlsClientHello" type="variant">
+  Packet is a TLS ClientHello with SNI extension
+</ResponseField>
+
+<ResponseField name="HttpRequest" type="variant">
+  Packet is an HTTP request with Host header
+</ResponseField>
+
+<ResponseField name="Unknown" type="variant">
+  Packet type could not be identified (passthrough)
+</ResponseField>
+
+## Complete Example
+
+```rust
+use turkey_dpi_engine::{BypassEngine, BypassConfig, DetectedProtocol};
+use std::thread;
+
+fn main() {
+    // Create engine with ISP-specific preset
+    let engine = BypassEngine::new(BypassConfig::vodafone_tr());
+    
+    // Sample TLS ClientHello packet (truncated)
+    let tls_packet = vec![
+        0x16, 0x03, 0x01, 0x00, 0x5a,  // TLS Record
+        0x01, 0x00, 0x00, 0x56,        // Handshake
+        0x03, 0x03,                     // TLS 1.2
+        // ... random bytes ...
+    ];
+    
+    // Process packet
+    let result = engine.process_outgoing(&tls_packet);
+    
+    match result.protocol {
+        DetectedProtocol::TlsClientHello => {
+            println!("Detected TLS ClientHello");
+            println!("Server: {}", result.hostname.unwrap_or_default());
+            println!("Fragments: {}", result.fragments.len());
+            
+            // Send fake packet first (if enabled)
+            if let Some(fake) = result.fake_packet {
+                send_packet_with_ttl(&fake, 1);
+            }
+            
+            // Send fragments with delay
+            for (i, fragment) in result.fragments.iter().enumerate() {
+                send_packet(fragment);
+                
+                // Add delay between fragments (not after last)
+                if i < result.fragments.len() - 1 {
+                    if let Some(delay) = result.inter_fragment_delay {
+                        thread::sleep(delay);
+                    }
+                }
+            }
+        }
+        DetectedProtocol::HttpRequest => {
+            println!("Detected HTTP request");
+            // Handle HTTP fragmentation...
+        }
+        DetectedProtocol::Unknown => {
+            // Send unmodified
+            send_packet(&result.fragments[0]);
+        }
+    }
+}
+
+fn send_packet(data: &[u8]) {
+    // Implementation: send via raw socket or packet filter
+}
+
+fn send_packet_with_ttl(data: &[u8], ttl: u8) {
+    // Implementation: send with specific TTL
+}
+```
+
+## See Also
+
+- [Config](/api/config) - Advanced configuration system
+- [Pipeline](/api/pipeline) - Full packet processing pipeline

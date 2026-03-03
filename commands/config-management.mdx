@@ -1,0 +1,611 @@
+---
+title: 'Configuration Management'
+description: 'Validate and generate TurkeyDPI configuration files'
+icon: 'file-code'
+---
+
+## Overview
+
+Configuration management commands help you work with TurkeyDPI configuration files without running the daemon. These commands validate syntax, check for errors, and generate template configurations.
+
+## Commands
+
+### validate
+
+Validate a configuration file without starting the daemon.
+
+```bash
+turkeydpi validate <FILE>
+```
+
+<ParamField path="FILE" type="path" required>
+  Path to configuration file to validate.
+  
+  **Supported formats:**
+  - TOML (`.toml`)
+  - JSON (`.json`)
+</ParamField>
+
+**Success Output:**
+```
+✓ Configuration is valid: /etc/turkeydpi/config.toml
+```
+
+**Error Output:**
+```
+✗ Configuration error: missing field `enabled` at line 3 column 1
+```
+
+**Exit codes:**
+- `0` - Configuration is valid
+- `1` - Configuration has errors
+
+**Validation Checks:**
+
+<Steps>
+  <Step title="Syntax Validation">
+    Verifies TOML/JSON syntax is correct
+  </Step>
+  <Step title="Schema Validation">
+    Ensures all required fields are present
+  </Step>
+  <Step title="Type Validation">
+    Checks field types match expected values
+  </Step>
+  <Step title="Value Validation">
+    Validates ranges, enums, and constraints
+  </Step>
+  <Step title="Reference Validation">
+    Checks rule references and transform types
+  </Step>
+</Steps>
+
+**Use cases:**
+- Pre-deployment configuration testing
+- CI/CD pipeline validation
+- Debugging configuration errors
+- Learning configuration syntax
+
+---
+
+### reload
+
+Reload daemon configuration from a file without restart.
+
+```bash
+turkeydpi reload <FILE>
+```
+
+<ParamField path="FILE" type="path" required>
+  Path to new configuration file.
+  
+  File is validated before reload. If validation fails, current config remains active.
+</ParamField>
+
+**Output:**
+```
+Configuration reloaded
+```
+
+**Error Output:**
+```
+Error: Failed to load config from /etc/turkeydpi/config.toml: invalid value for field 'priority'
+```
+
+**Reload Process:**
+
+1. Validate new configuration file
+2. If valid, send to daemon via control socket
+3. Daemon applies new configuration
+4. Existing flows continue with old config
+5. New flows use new configuration
+
+**What Gets Reloaded:**
+- Global settings (feature flags)
+- All rules and priorities
+- Transform parameters
+- Resource limits
+
+**What Doesn't Change:**
+- Proxy listen address (requires restart)
+- Socket path (requires restart)
+- Log level (requires restart)
+- Active flow table
+
+**Use cases:**
+- Adjusting fragmentation parameters
+- Adding/removing rules
+- Changing transform settings
+- Tuning performance limits
+
+**Requirements:**
+- Daemon must be running
+- Control socket must be accessible
+- New config must be valid
+
+---
+
+### gen-config
+
+Generate an example configuration file with all options documented.
+
+```bash
+turkeydpi gen-config [OPTIONS]
+```
+
+<ParamField path="--format" type="enum" default="toml">
+  Output format.
+  
+  **Options:**
+  - `toml` - TOML format (default, recommended)
+  - `json` - JSON format
+</ParamField>
+
+<ParamField path="--output" type="path">
+  Output file path.
+  
+  If not specified, prints to stdout.
+  
+  **Examples:**
+  - `-o config.toml`
+  - `--output /etc/turkeydpi/config.toml`
+</ParamField>
+
+**Examples:**
+
+#### Generate TOML to stdout
+
+```bash
+turkeydpi gen-config
+```
+
+**Output:**
+```toml
+[global]
+enabled = true
+enable_fragmentation = true
+enable_jitter = false
+enable_padding = true
+enable_header_normalization = true
+log_level = "info"
+json_logging = false
+
+[[rules]]
+name = "https-evasion"
+enabled = true
+priority = 100
+dst_ports = [443]
+protocols = ["tcp"]
+transforms = ["fragment", "padding"]
+
+[[rules]]
+name = "dns-protection"
+enabled = true
+priority = 90
+dst_ports = [53]
+protocols = ["udp"]
+transforms = ["padding"]
+
+[limits]
+max_flows = 10000
+max_queue_size = 1000
+max_memory_mb = 128
+max_jitter_ms = 500
+flow_timeout_secs = 120
+log_rate_limit = 100
+
+[transforms.fragment]
+min_size = 1
+max_size = 40
+split_at_offset = 0
+randomize = true
+
+[transforms.resegment]
+segment_size = 16
+max_segments = 8
+
+[transforms.padding]
+min_bytes = 0
+max_bytes = 64
+fill_byte = 0
+
+[transforms.jitter]
+min_ms = 0
+max_ms = 50
+
+[transforms.header]
+normalize_ttl = false
+ttl_value = 64
+normalize_window = false
+randomize_ip_id = true
+
+[transforms.decoy]
+send_before = false
+send_after = false
+ttl = 1
+probability = 0.0
+```
+
+#### Generate JSON to file
+
+```bash
+turkeydpi gen-config --format json --output config.json
+```
+
+**Output:**
+```
+Configuration written to config.json
+```
+
+**File contents (config.json):**
+```json
+{
+  "global": {
+    "enabled": true,
+    "enable_fragmentation": true,
+    "enable_jitter": false,
+    "enable_padding": true,
+    "enable_header_normalization": true,
+    "log_level": "info",
+    "json_logging": false
+  },
+  "rules": [
+    {
+      "name": "https-evasion",
+      "enabled": true,
+      "priority": 100,
+      "match_criteria": {
+        "dst_ports": [443],
+        "protocols": ["tcp"]
+      },
+      "transforms": ["fragment", "padding"],
+      "overrides": {}
+    },
+    {
+      "name": "dns-protection",
+      "enabled": true,
+      "priority": 90,
+      "match_criteria": {
+        "dst_ports": [53],
+        "protocols": ["udp"]
+      },
+      "transforms": ["padding"],
+      "overrides": {}
+    }
+  ],
+  "limits": {
+    "max_flows": 10000,
+    "max_queue_size": 1000,
+    "max_memory_mb": 128,
+    "max_jitter_ms": 500,
+    "flow_timeout_secs": 120,
+    "log_rate_limit": 100
+  },
+  "transforms": {
+    "fragment": {
+      "min_size": 1,
+      "max_size": 40,
+      "split_at_offset": null,
+      "randomize": true
+    },
+    "resegment": {
+      "segment_size": 16,
+      "max_segments": 8
+    },
+    "padding": {
+      "min_bytes": 0,
+      "max_bytes": 64,
+      "fill_byte": null
+    },
+    "jitter": {
+      "min_ms": 0,
+      "max_ms": 50
+    },
+    "header": {
+      "normalize_ttl": false,
+      "ttl_value": 64,
+      "normalize_window": false,
+      "randomize_ip_id": true
+    },
+    "decoy": {
+      "send_before": false,
+      "send_after": false,
+      "ttl": 1,
+      "probability": 0.0
+    }
+  }
+}
+```
+
+#### Save and customize
+
+```bash
+turkeydpi gen-config -o base-config.toml
+# Edit base-config.toml with your settings
+turkeydpi validate base-config.toml
+turkeydpi run --config base-config.toml --proxy
+```
+
+---
+
+## Configuration Structure
+
+The generated configuration includes these sections:
+
+### Global Settings
+
+```toml
+[global]
+enabled = true                        # Master enable/disable
+enable_fragmentation = true           # Enable fragmentation transform
+enable_jitter = false                 # Enable jitter/delay transform
+enable_padding = true                 # Enable padding transform
+enable_header_normalization = true    # Enable header manipulation
+log_level = "info"                    # trace, debug, info, warn, error
+json_logging = false                  # JSON log output
+```
+
+### Rules
+
+Define which traffic gets transformed:
+
+```toml
+[[rules]]
+name = "https-evasion"        # Rule identifier
+enabled = true                 # Enable this rule
+priority = 100                 # Higher = checked first
+dst_ports = [443]              # Destination ports to match
+protocols = ["tcp"]            # tcp, udp, icmp
+transforms = ["fragment", "padding"]  # Transform chain
+```
+
+### Transform Parameters
+
+Global defaults for each transform type:
+
+#### Fragment
+
+```toml
+[transforms.fragment]
+min_size = 1              # Minimum fragment size (bytes)
+max_size = 40             # Maximum fragment size (bytes)
+split_at_offset = 0       # Specific offset to split (0 = auto)
+randomize = true          # Randomize fragment sizes
+```
+
+#### Padding
+
+```toml
+[transforms.padding]
+min_bytes = 0             # Minimum padding (bytes)
+max_bytes = 64            # Maximum padding (bytes)
+fill_byte = 0             # Padding byte value (0-255, null = random)
+```
+
+#### Jitter
+
+```toml
+[transforms.jitter]
+min_ms = 0                # Minimum delay (milliseconds)
+max_ms = 50               # Maximum delay (milliseconds)
+```
+
+#### Header
+
+```toml
+[transforms.header]
+normalize_ttl = false     # Normalize IP TTL
+ttl_value = 64            # TTL to set if normalizing
+normalize_window = false  # Normalize TCP window
+randomize_ip_id = true    # Randomize IP ID field
+```
+
+#### Decoy
+
+```toml
+[transforms.decoy]
+send_before = false       # Send decoy before real packet
+send_after = false        # Send decoy after real packet
+ttl = 1                   # Decoy packet TTL (expires quickly)
+probability = 0.0         # Probability of sending decoy (0.0-1.0)
+```
+
+### Limits
+
+```toml
+[limits]
+max_flows = 10000         # Maximum concurrent flows
+max_queue_size = 1000     # Packet queue size
+max_memory_mb = 128       # Memory limit
+max_jitter_ms = 500       # Maximum jitter delay
+flow_timeout_secs = 120   # Flow idle timeout
+log_rate_limit = 100      # Max log messages per second
+```
+
+## Workflow Examples
+
+### Development Workflow
+
+```bash
+# 1. Generate base config
+turkeydpi gen-config -o dev-config.toml
+
+# 2. Edit configuration
+vim dev-config.toml
+
+# 3. Validate changes
+turkeydpi validate dev-config.toml
+
+# 4. Test with daemon
+turkeydpi run --config dev-config.toml --proxy
+
+# 5. Monitor effectiveness
+turkeydpi stats
+
+# 6. Adjust and reload
+vim dev-config.toml
+turkeydpi validate dev-config.toml
+turkeydpi reload dev-config.toml
+```
+
+### CI/CD Pipeline
+
+```yaml
+# .gitlab-ci.yml
+validate-config:
+  script:
+    - turkeydpi validate production-config.toml
+  only:
+    - merge_requests
+
+deploy:
+  script:
+    - scp production-config.toml server:/etc/turkeydpi/
+    - ssh server 'turkeydpi validate /etc/turkeydpi/production-config.toml'
+    - ssh server 'turkeydpi reload /etc/turkeydpi/production-config.toml'
+  only:
+    - main
+```
+
+### Testing Different Presets
+
+```bash
+#!/bin/bash
+# Test different fragmentation settings
+
+for MAX_SIZE in 10 20 40 80; do
+    echo "Testing max_size=$MAX_SIZE"
+    
+    turkeydpi gen-config -o test.toml
+    sed -i "s/max_size = 40/max_size = $MAX_SIZE/" test.toml
+    
+    turkeydpi validate test.toml
+    turkeydpi reload test.toml
+    
+    sleep 30  # Test traffic
+    turkeydpi stats | grep "Transformed"
+    
+    turkeydpi reset-stats
+done
+```
+
+## Global Options
+
+<ParamField path="--config" type="path">
+  Not used by config management commands.
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Logging level for the command.
+</ParamField>
+
+<ParamField path="--json-logs" type="boolean" default="false">
+  Output logs in JSON format.
+</ParamField>
+
+<ParamField path="--socket" type="path" default="/tmp/turkeydpi.sock">
+  Control socket path (used by `reload` command).
+</ParamField>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Validation fails with syntax error">
+    Check TOML/JSON syntax:
+    
+    **Common TOML errors:**
+    - Missing quotes around strings
+    - Incorrect array syntax (use `[...]` not `(...)`)
+    - Duplicate keys
+    - Invalid escape sequences
+    
+    **Common JSON errors:**
+    - Trailing commas
+    - Single quotes instead of double quotes
+    - Missing commas between fields
+    
+    Use a linter:
+    ```bash
+    # TOML
+    taplo check config.toml
+    
+    # JSON
+    jq . config.json
+    ```
+  </Accordion>
+  
+  <Accordion title="Reload fails with validation error">
+    Validate first to see detailed error:
+    ```bash
+    turkeydpi validate /etc/turkeydpi/config.toml
+    ```
+  </Accordion>
+  
+  <Accordion title="Reload has no effect">
+    **Reasons:**
+    - Config file path is wrong
+    - Changes don't affect active flows (only new ones)
+    - Daemon needs restart for some settings
+    
+    **Solution:**
+    ```bash
+    # Check what changed
+    turkeydpi status
+    
+    # For socket/listen changes, restart required
+    systemctl restart turkeydpi
+    ```
+  </Accordion>
+  
+  <Accordion title="gen-config output is truncated">
+    Redirect to file instead of viewing in terminal:
+    ```bash
+    turkeydpi gen-config -o config.toml
+    cat config.toml
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Configuration Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Version Control" icon="code-branch">
+    Store configs in git, use branches for testing:
+    ```bash
+    git checkout -b test-aggressive-fragment
+    vim config.toml
+    turkeydpi validate config.toml
+    ```
+  </Card>
+  
+  <Card title="Documentation" icon="book">
+    Add comments explaining ISP-specific settings:
+    ```toml
+    # Türk Telekom blocks at SNI offset 2
+    max_size = 20
+    ```
+  </Card>
+  
+  <Card title="Testing" icon="flask">
+    Validate in CI before deployment:
+    ```yaml
+    test:
+      script:
+        - turkeydpi validate config.toml
+    ```
+  </Card>
+  
+  <Card title="Monitoring" icon="chart-line">
+    Track effectiveness after changes:
+    ```bash
+    turkeydpi reload config.toml
+    watch turkeydpi stats
+    ```
+  </Card>
+</CardGroup>
+
+## See Also
+
+- [run command](/commands/run) - Use configurations with daemon
+- [Configuration Guide](/usage/configuration) - Complete configuration reference
+- [Daemon Control](/commands/daemon-control) - Monitor configuration effectiveness

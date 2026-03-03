@@ -1,0 +1,670 @@
+---
+title: 'Config'
+description: 'Configuration system for TurkeyDPI engine'
+---
+
+## Overview
+
+The `Config` system provides a flexible, rule-based configuration for the TurkeyDPI engine. It supports JSON and TOML formats, validation, and hot-reloading.
+
+## Config
+
+### Structure
+
+```rust
+pub struct Config {
+    pub global: GlobalConfig,
+    pub rules: Vec<Rule>,
+    pub limits: Limits,
+    pub transforms: TransformParams,
+}
+```
+
+### Fields
+
+<ParamField path="global" type="GlobalConfig" required>
+  Global engine settings and feature flags
+</ParamField>
+
+<ParamField path="rules" type="Vec<Rule>" required>
+  Packet matching rules with transform actions
+</ParamField>
+
+<ParamField path="limits" type="Limits" required>
+  Resource limits and safety constraints
+</ParamField>
+
+<ParamField path="transforms" type="TransformParams" required>
+  Parameters for all transform types
+</ParamField>
+
+### Methods
+
+#### load_from_file
+
+```rust
+pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self>
+```
+
+Loads configuration from a JSON or TOML file (detected by extension).
+
+<ParamField path="path" type="impl AsRef<Path>" required>
+  Path to configuration file (.json or .toml)
+</ParamField>
+
+<ResponseField name="Config" type="Result<Config>">
+  Loaded and validated configuration
+</ResponseField>
+
+**Example:**
+
+```rust
+use turkey_dpi_engine::Config;
+
+let config = Config::load_from_file("config.toml")?;
+```
+
+#### from_json
+
+```rust
+pub fn from_json(json: &str) -> Result<Self>
+```
+
+Parses configuration from a JSON string.
+
+**Example:**
+
+```rust
+let json = r#"
+{
+  "global": {
+    "enabled": true,
+    "enable_fragmentation": true
+  },
+  "rules": [
+    {
+      "name": "https-bypass",
+      "match_criteria": {
+        "dst_ports": [443],
+        "protocols": ["tcp"]
+      },
+      "transforms": ["fragment", "padding"]
+    }
+  ]
+}
+"#;
+
+let config = Config::from_json(json)?;
+```
+
+#### from_toml
+
+```rust
+pub fn from_toml(toml_str: &str) -> Result<Self>
+```
+
+Parses configuration from a TOML string.
+
+**Example:**
+
+```rust
+let toml = r#"
+[global]
+enabled = true
+enable_fragmentation = true
+
+[[rules]]
+name = "https-bypass"
+transforms = ["fragment", "padding"]
+
+[rules.match_criteria]
+dst_ports = [443]
+protocols = ["tcp"]
+"#;
+
+let config = Config::from_toml(toml)?;
+```
+
+#### validate
+
+```rust
+pub fn validate(&self) -> Result<()>
+```
+
+Validates the configuration, checking limits, parameters, and rule consistency.
+
+**Example:**
+
+```rust
+let mut config = Config::default();
+config.limits.max_flows = 0; // Invalid
+
+assert!(config.validate().is_err());
+```
+
+#### merge
+
+```rust
+pub fn merge(&mut self, other: Config)
+```
+
+Merges another configuration into this one, replacing rules and settings.
+
+**Example:**
+
+```rust
+let mut base_config = Config::default();
+let overlay = Config::load_from_file("overlay.toml")?;
+
+base_config.merge(overlay);
+```
+
+## GlobalConfig
+
+### Structure
+
+```rust
+pub struct GlobalConfig {
+    pub enabled: bool,
+    pub enable_fragmentation: bool,
+    pub enable_jitter: bool,
+    pub enable_padding: bool,
+    pub enable_header_normalization: bool,
+    pub log_level: String,
+    pub json_logging: bool,
+}
+```
+
+### Fields
+
+<ParamField path="enabled" type="bool" default="true">
+  Master switch for the entire engine
+</ParamField>
+
+<ParamField path="enable_fragmentation" type="bool" default="true">
+  Enable packet fragmentation transforms
+</ParamField>
+
+<ParamField path="enable_jitter" type="bool" default="false">
+  Enable timing jitter transforms
+</ParamField>
+
+<ParamField path="enable_padding" type="bool" default="true">
+  Enable packet padding transforms
+</ParamField>
+
+<ParamField path="enable_header_normalization" type="bool" default="true">
+  Enable header normalization transforms
+</ParamField>
+
+<ParamField path="log_level" type="String" default="info">
+  Logging level: `trace`, `debug`, `info`, `warn`, `error`
+</ParamField>
+
+<ParamField path="json_logging" type="bool" default="false">
+  Output logs in JSON format
+</ParamField>
+
+## Rule
+
+### Structure
+
+```rust
+pub struct Rule {
+    pub name: String,
+    pub enabled: bool,
+    pub priority: i32,
+    pub match_criteria: MatchCriteria,
+    pub transforms: Vec<TransformType>,
+    pub overrides: HashMap<String, serde_json::Value>,
+}
+```
+
+### Fields
+
+<ParamField path="name" type="String" required>
+  Unique name for the rule
+</ParamField>
+
+<ParamField path="enabled" type="bool" default="true">
+  Whether this rule is active
+</ParamField>
+
+<ParamField path="priority" type="i32" default="0">
+  Rule priority (higher = evaluated first)
+</ParamField>
+
+<ParamField path="match_criteria" type="MatchCriteria" required>
+  Conditions for matching packets
+</ParamField>
+
+<ParamField path="transforms" type="Vec<TransformType>" required>
+  List of transforms to apply when matched
+</ParamField>
+
+<ParamField path="overrides" type="HashMap<String, Value>" default="{}">
+  Rule-specific parameter overrides
+</ParamField>
+
+**Example:**
+
+```rust
+use turkey_dpi_engine::config::*;
+use std::collections::HashMap;
+
+let rule = Rule {
+    name: "discord-bypass".to_string(),
+    enabled: true,
+    priority: 100,
+    match_criteria: MatchCriteria {
+        dst_ports: Some(vec![443]),
+        protocols: Some(vec![Protocol::Tcp]),
+        domains: Some(vec!["discord.com".to_string()]),
+        ..Default::default()
+    },
+    transforms: vec![
+        TransformType::Fragment,
+        TransformType::Padding,
+        TransformType::Jitter,
+    ],
+    overrides: HashMap::new(),
+};
+
+rule.validate()?;
+```
+
+## MatchCriteria
+
+### Structure
+
+```rust
+pub struct MatchCriteria {
+    pub dst_ip: Option<Vec<String>>,
+    pub src_ip: Option<Vec<String>>,
+    pub dst_ports: Option<Vec<u16>>,
+    pub src_ports: Option<Vec<u16>>,
+    pub protocols: Option<Vec<Protocol>>,
+    pub domains: Option<Vec<String>>,
+    pub process: Option<String>,
+}
+```
+
+### Fields
+
+<ParamField path="dst_ip" type="Option<Vec<String>>">
+  Destination IP addresses or CIDR ranges (e.g., `["8.8.8.8", "1.1.1.0/24"]`)
+</ParamField>
+
+<ParamField path="src_ip" type="Option<Vec<String>>">
+  Source IP addresses or CIDR ranges
+</ParamField>
+
+<ParamField path="dst_ports" type="Option<Vec<u16>>">
+  Destination ports (e.g., `[443, 8443]`)
+</ParamField>
+
+<ParamField path="src_ports" type="Option<Vec<u16>>">
+  Source ports
+</ParamField>
+
+<ParamField path="protocols" type="Option<Vec<Protocol>>">
+  Protocols: `tcp`, `udp`, or `icmp`
+</ParamField>
+
+<ParamField path="domains" type="Option<Vec<String>>">
+  Domain names to match (requires SNI/Host inspection)
+</ParamField>
+
+<ParamField path="process" type="Option<String>">
+  Process name (platform-dependent)
+</ParamField>
+
+**All criteria are AND-ed together. Empty/None means "match all" for that field.**
+
+**Example:**
+
+```rust
+// Match HTTPS traffic to Discord
+let criteria = MatchCriteria {
+    dst_ports: Some(vec![443]),
+    protocols: Some(vec![Protocol::Tcp]),
+    domains: Some(vec!["discord.com".to_string()]),
+    ..Default::default()
+};
+
+// Match all DNS traffic
+let dns_criteria = MatchCriteria {
+    dst_ports: Some(vec![53]),
+    protocols: Some(vec![Protocol::Udp]),
+    ..Default::default()
+};
+
+// Catch-all rule
+let catch_all = MatchCriteria::default();
+assert!(catch_all.is_catch_all());
+```
+
+## TransformType
+
+### Enum
+
+```rust
+pub enum TransformType {
+    Fragment,
+    Resegment,
+    Padding,
+    Jitter,
+    HeaderNormalization,
+    Decoy,
+    Reorder,
+}
+```
+
+<ParamField path="Fragment" type="variant">
+  Split packets into smaller fragments
+</ParamField>
+
+<ParamField path="Resegment" type="variant">
+  Re-segment TCP streams
+</ParamField>
+
+<ParamField path="Padding" type="variant">
+  Add random padding to packets
+</ParamField>
+
+<ParamField path="Jitter" type="variant">
+  Add timing delays between packets
+</ParamField>
+
+<ParamField path="HeaderNormalization" type="variant">
+  Normalize packet headers (TTL, window size, etc.)
+</ParamField>
+
+<ParamField path="Decoy" type="variant">
+  Send decoy packets with low TTL
+</ParamField>
+
+<ParamField path="Reorder" type="variant">
+  Reorder packet transmission
+</ParamField>
+
+## TransformParams
+
+### Structure
+
+```rust
+pub struct TransformParams {
+    pub fragment: FragmentParams,
+    pub resegment: ResegmentParams,
+    pub padding: PaddingParams,
+    pub jitter: JitterParams,
+    pub header: HeaderParams,
+    pub decoy: DecoyParams,
+}
+```
+
+### FragmentParams
+
+```rust
+pub struct FragmentParams {
+    pub min_size: usize,
+    pub max_size: usize,
+    pub split_at_offset: Option<usize>,
+    pub randomize: bool,
+}
+```
+
+<ParamField path="min_size" type="usize" default="1">
+  Minimum fragment size in bytes
+</ParamField>
+
+<ParamField path="max_size" type="usize" default="40">
+  Maximum fragment size in bytes
+</ParamField>
+
+<ParamField path="split_at_offset" type="Option<usize>">
+  Fixed offset to split at (None = random)
+</ParamField>
+
+<ParamField path="randomize" type="bool" default="true">
+  Randomize fragment sizes
+</ParamField>
+
+### PaddingParams
+
+```rust
+pub struct PaddingParams {
+    pub min_bytes: usize,
+    pub max_bytes: usize,
+    pub fill_byte: Option<u8>,
+}
+```
+
+<ParamField path="min_bytes" type="usize" default="0">
+  Minimum padding bytes
+</ParamField>
+
+<ParamField path="max_bytes" type="usize" default="64">
+  Maximum padding bytes
+</ParamField>
+
+<ParamField path="fill_byte" type="Option<u8>">
+  Byte to use for padding (None = random)
+</ParamField>
+
+### JitterParams
+
+```rust
+pub struct JitterParams {
+    pub min_ms: u64,
+    pub max_ms: u64,
+}
+```
+
+<ParamField path="min_ms" type="u64" default="0">
+  Minimum delay in milliseconds
+</ParamField>
+
+<ParamField path="max_ms" type="u64" default="50">
+  Maximum delay in milliseconds
+</ParamField>
+
+### HeaderParams
+
+```rust
+pub struct HeaderParams {
+    pub normalize_ttl: bool,
+    pub ttl_value: u8,
+    pub normalize_window: bool,
+    pub randomize_ip_id: bool,
+}
+```
+
+<ParamField path="normalize_ttl" type="bool" default="false">
+  Normalize TTL values
+</ParamField>
+
+<ParamField path="ttl_value" type="u8" default="64">
+  TTL value to use when normalizing
+</ParamField>
+
+<ParamField path="normalize_window" type="bool" default="false">
+  Normalize TCP window sizes
+</ParamField>
+
+<ParamField path="randomize_ip_id" type="bool" default="true">
+  Randomize IP ID field
+</ParamField>
+
+### DecoyParams
+
+```rust
+pub struct DecoyParams {
+    pub send_before: bool,
+    pub send_after: bool,
+    pub ttl: u8,
+    pub probability: f32,
+}
+```
+
+<ParamField path="send_before" type="bool" default="false">
+  Send decoy packet before real packet
+</ParamField>
+
+<ParamField path="send_after" type="bool" default="false">
+  Send decoy packet after real packet
+</ParamField>
+
+<ParamField path="ttl" type="u8" default="1">
+  TTL for decoy packets
+</ParamField>
+
+<ParamField path="probability" type="f32" default="0.0">
+  Probability of sending decoy (0.0-1.0)
+</ParamField>
+
+## Limits
+
+### Structure
+
+```rust
+pub struct Limits {
+    pub max_flows: usize,
+    pub max_queue_size: usize,
+    pub max_memory_mb: usize,
+    pub max_jitter_ms: u64,
+    pub flow_timeout_secs: u64,
+    pub log_rate_limit: u32,
+}
+```
+
+<ParamField path="max_flows" type="usize" default="10000">
+  Maximum number of concurrent flows to track
+</ParamField>
+
+<ParamField path="max_queue_size" type="usize" default="1000">
+  Maximum packets in processing queue
+</ParamField>
+
+<ParamField path="max_memory_mb" type="usize" default="128">
+  Memory limit in megabytes
+</ParamField>
+
+<ParamField path="max_jitter_ms" type="u64" default="500">
+  Maximum allowed jitter delay in milliseconds
+</ParamField>
+
+<ParamField path="flow_timeout_secs" type="u64" default="120">
+  Timeout for idle flows in seconds
+</ParamField>
+
+<ParamField path="log_rate_limit" type="u32" default="100">
+  Maximum log messages per second
+</ParamField>
+
+## Complete Example
+
+### TOML Configuration
+
+```toml
+# config.toml
+
+[global]
+enabled = true
+enable_fragmentation = true
+enable_jitter = true
+enable_padding = true
+enable_header_normalization = false
+log_level = "info"
+json_logging = false
+
+[[rules]]
+name = "discord-bypass"
+enabled = true
+priority = 100
+transforms = ["fragment", "padding", "jitter"]
+
+[rules.match_criteria]
+dst_ports = [443]
+protocols = ["tcp"]
+domains = ["discord.com", "discordapp.com"]
+
+[[rules]]
+name = "twitter-bypass"
+enabled = true
+priority = 90
+transforms = ["fragment", "decoy"]
+
+[rules.match_criteria]
+dst_ip = ["104.244.42.0/24"]
+dst_ports = [443]
+protocols = ["tcp"]
+
+[[rules]]
+name = "catch-all"
+enabled = true
+priority = 0
+transforms = ["padding"]
+
+[rules.match_criteria]
+# Empty = match all
+
+[limits]
+max_flows = 10000
+max_queue_size = 1000
+max_memory_mb = 128
+max_jitter_ms = 500
+flow_timeout_secs = 120
+log_rate_limit = 100
+
+[transforms.fragment]
+min_size = 1
+max_size = 40
+randomize = true
+
+[transforms.padding]
+min_bytes = 0
+max_bytes = 64
+
+[transforms.jitter]
+min_ms = 5
+max_ms = 50
+
+[transforms.header]
+normalize_ttl = false
+ttl_value = 64
+normalize_window = false
+randomize_ip_id = true
+
+[transforms.decoy]
+send_before = true
+send_after = false
+ttl = 1
+probability = 0.3
+```
+
+### Loading and Using Config
+
+```rust
+use turkey_dpi_engine::{Config, Pipeline};
+use std::sync::Arc;
+
+// Load from file
+let config = Config::load_from_file("config.toml")?;
+
+// Validate before use
+config.validate()?;
+
+// Use with Pipeline
+let stats = Arc::new(Stats::new());
+let pipeline = Pipeline::new(config, stats)?;
+
+// Later: hot-reload configuration
+let new_config = Config::load_from_file("config.toml")?;
+pipeline.reload_config(new_config)?;
+```
+
+## See Also
+
+- [Pipeline](/api/pipeline) - Using Config with the Pipeline
+- [BypassEngine](/api/bypass-engine) - Simple bypass engine (alternative to full Config)

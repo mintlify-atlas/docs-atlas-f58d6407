@@ -1,0 +1,248 @@
+---
+title: 'bypass'
+description: 'Quick start HTTP proxy with built-in DPI bypass'
+icon: 'shield-halved'
+---
+
+## Overview
+
+The `bypass` command starts a lightweight HTTP proxy server with built-in DPI (Deep Packet Inspection) bypass capabilities. It's designed for quick deployment without requiring configuration files.
+
+This mode:
+- Runs a local HTTP proxy with SNI and HTTP Host fragmentation
+- Supports ISP-specific presets for Turkey's major providers
+- Uses DNS-over-HTTPS to bypass DNS blocking
+- Automatically detects and fragments TLS ClientHello and HTTP requests
+
+## Usage
+
+```bash
+turkeydpi bypass [OPTIONS]
+```
+
+## Options
+
+<ParamField path="--listen" type="string" default="127.0.0.1:8844">
+  Proxy server listen address and port.
+  
+  **Examples:**
+  - `127.0.0.1:8844` - localhost only
+  - `0.0.0.0:8844` - listen on all interfaces
+  - `[::]:8844` - IPv6 all interfaces
+</ParamField>
+
+<ParamField path="--preset" type="enum" default="aggressive">
+  ISP-specific bypass configuration preset.
+  
+  **Available Presets:**
+  
+  - `aggressive` - Maximum fragmentation, works for most cases
+    - TLS split: at SNI midpoint
+    - HTTP split: at position 1
+    - Fragment delay: 10ms
+    - Max segment size: 5 bytes
+  
+  - `turk-telekom` - Optimized for Türk Telekom
+    - TLS split: at position 2
+    - HTTP split: at position 2
+    - Max segment size: 20 bytes
+  
+  - `vodafone` - Optimized for Vodafone Turkey
+    - TLS split: at position 3
+    - HTTP split: at position 3
+    - Fragment delay: 100μs
+    - Max segment size: 30 bytes
+  
+  - `superonline` - Optimized for Superonline
+    - TLS split: at position 1
+    - HTTP split: at position 1
+    - Max segment size: 15 bytes
+</ParamField>
+
+<ParamField path="--verbose" type="boolean" default="false">
+  Enable verbose logging output. Shows detailed connection information including:
+  - Each connection's protocol detection
+  - Hostname extraction from SNI/Host headers
+  - Fragment application status
+  - DNS resolution details
+  
+  When enabled, sets log level to `debug`.
+</ParamField>
+
+<ParamField path="--config" type="path">
+  Path to configuration file (global option).
+  
+  Note: The `bypass` command ignores this option as it uses preset configurations.
+</ParamField>
+
+<ParamField path="--log-level" type="string" default="info">
+  Logging level (global option). Overridden by `--verbose` flag.
+  
+  **Levels:** trace, debug, info, warn, error
+</ParamField>
+
+<ParamField path="--json-logs" type="boolean" default="false">
+  Output logs in JSON format (global option).
+</ParamField>
+
+<ParamField path="--socket" type="path" default="/tmp/turkeydpi.sock">
+  Control socket path (global option, not used in bypass mode).
+</ParamField>
+
+## Examples
+
+### Start with default settings
+
+```bash
+turkeydpi bypass
+```
+
+**Output:**
+```
+╔══════════════════════════════════════════════════════════════╗
+║            TurkeyDPI -  Bypass Proxy Started                 ║
+╠══════════════════════════════════════════════════════════════╣
+║  Listening on: http://127.0.0.1:8844                         ║
+║  SNI Fragmentation: ENABLED ✓                                ║
+║  HTTP Host Fragmentation: ENABLED ✓                          ║
+║  DNS-over-HTTPS: ENABLED ✓ (bypasses DNS blocking)           ║
+╠══════════════════════════════════════════════════════════════╣
+║  Configure your browser HTTP proxy to: 127.0.0.1:8844        ║
+║  Press Ctrl+C to stop                                        ║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+### Start on custom port with Türk Telekom preset
+
+```bash
+turkeydpi bypass --listen 127.0.0.1:9090 --preset turk-telekom
+```
+
+### Run with verbose logging
+
+```bash
+turkeydpi bypass --verbose
+```
+
+**Sample verbose output:**
+```
+🔒 discord.com [SNI fragmented]
+🔒 twitter.com [SNI fragmented]
+🌐 example.com [Host fragmented]
+```
+
+### Listen on all interfaces (for LAN access)
+
+```bash
+turkeydpi bypass --listen 0.0.0.0:8844 --preset aggressive
+```
+
+## How It Works
+
+1. **Protocol Detection**: Analyzes outgoing traffic to detect:
+   - TLS ClientHello messages (HTTPS)
+   - HTTP requests
+   - Unknown protocols (passed through unchanged)
+
+2. **Smart Fragmentation**:
+   - **TLS**: Splits ClientHello at SNI (Server Name Indication) field
+   - **HTTP**: Splits requests at Host header
+   - Fragments are sent with configurable delays
+
+3. **DNS-over-HTTPS**: All DNS queries use DoH to bypass DNS-based blocking
+
+4. **Statistics**: On shutdown (Ctrl+C), displays:
+   - Total and active connections
+   - TLS vs HTTP connection counts
+   - Bypass application count
+   - Data transferred
+   - Error count
+
+## When to Use Each Preset
+
+<CardGroup cols={2}>
+  <Card title="aggressive" icon="bolt">
+    **Best for:** Most blocking scenarios, maximum evasion
+    
+    **Trade-off:** May be slower due to heavy fragmentation
+  </Card>
+  
+  <Card title="turk-telekom" icon="tower-cell">
+    **Best for:** Türk Telekom connections
+    
+    **Trade-off:** Balanced performance
+  </Card>
+  
+  <Card title="vodafone" icon="signal">
+    **Best for:** Vodafone Turkey connections
+    
+    **Trade-off:** Faster with moderate fragmentation
+  </Card>
+  
+  <Card title="superonline" icon="wifi">
+    **Best for:** Superonline connections
+    
+    **Trade-off:** Aggressive fragmentation, smaller segments
+  </Card>
+</CardGroup>
+
+## Configuration Details
+
+The bypass command uses the following fixed configuration:
+
+- **Buffer Size**: 64KB
+- **Connect Timeout**: 30 seconds
+- **DNS Provider**: Cloudflare DoH (1.1.1.1)
+- **TCP Options**: TCP_NODELAY enabled for both client and server connections
+
+## Browser Configuration
+
+<Tabs>
+  <Tab title="Firefox">
+    1. Settings → Network Settings → Settings
+    2. Select "Manual proxy configuration"
+    3. HTTP Proxy: `127.0.0.1`, Port: `8844`
+    4. Check "Also use this proxy for HTTPS"
+  </Tab>
+  
+  <Tab title="Chrome">
+    1. Settings → System → Open proxy settings
+    2. LAN Settings → Proxy server
+    3. Address: `127.0.0.1`, Port: `8844`
+  </Tab>
+  
+  <Tab title="System (Linux)">
+    ```bash
+    export http_proxy=http://127.0.0.1:8844
+    export https_proxy=http://127.0.0.1:8844
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection refused error">
+    Ensure TurkeyDPI is running and listening on the correct address:
+    ```bash
+    turkeydpi bypass --listen 0.0.0.0:8844
+    ```
+  </Accordion>
+  
+  <Accordion title="Still blocked with aggressive preset">
+    Try different presets or check if your ISP uses different blocking methods.
+  </Accordion>
+  
+  <Accordion title="Slow connection">
+    Use a less aggressive preset like `vodafone` or adjust your ISP-specific preset.
+  </Accordion>
+  
+  <Accordion title="DNS resolution fails">
+    DoH is built-in. If failing, check firewall rules for outbound HTTPS (443) to 1.1.1.1.
+  </Accordion>
+</AccordionGroup>
+
+## See Also
+
+- [run command](/commands/run) - Full daemon mode with advanced features
+- [Configuration Guide](/usage/configuration) - Advanced configuration options

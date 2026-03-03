@@ -1,0 +1,913 @@
+---
+title: 'Configuration'
+description: 'Advanced configuration and customization for TurkeyDPI'
+icon: 'gear'
+---
+
+## Overview
+
+TurkeyDPI uses TOML configuration files for advanced customization. While [ISP presets](/usage/isp-presets) work for most users, configuration files give you fine-grained control over bypass behavior.
+
+## Generating a Configuration File
+
+The easiest way to start is by generating an example configuration:
+
+<Tabs>
+  <Tab title="TOML">
+    ```bash
+    turkeydpi gen-config --output config.toml
+    ```
+    
+    Creates a TOML file with all available options and comments.
+  </Tab>
+  
+  <Tab title="JSON">
+    ```bash
+    turkeydpi gen-config --format json --output config.json
+    ```
+    
+    Creates a JSON configuration file (same options, different format).
+  </Tab>
+  
+  <Tab title="Stdout">
+    ```bash
+    turkeydpi gen-config
+    ```
+    
+    Prints the configuration to stdout instead of a file.
+  </Tab>
+</Tabs>
+
+## Configuration Structure
+
+A TurkeyDPI configuration file has five main sections:
+
+```toml
+[global]          # Global settings and master switches
+[[rules]]         # Traffic matching and transform rules
+[limits]          # Resource and safety limits
+[transforms]      # Transform-specific parameters
+```
+
+## Global Section
+
+Top-level configuration and master switches.
+
+```toml
+[global]
+enabled = true
+enable_fragmentation = true
+enable_jitter = false
+enable_padding = true
+enable_header_normalization = true
+log_level = "info"
+json_logging = false
+```
+
+<Accordion title="enabled">
+  **Type:** `boolean`
+  
+  **Default:** `true`
+  
+  **Description:** Master switch for the entire engine. Set to `false` to disable all processing.
+  
+  ```toml
+  enabled = true
+  ```
+</Accordion>
+
+<Accordion title="enable_fragmentation">
+  **Type:** `boolean`
+  
+  **Default:** `true`
+  
+  **Description:** Global toggle for packet fragmentation. When `false`, no fragmentation occurs regardless of rules.
+  
+  ```toml
+  enable_fragmentation = true
+  ```
+</Accordion>
+
+<Accordion title="enable_jitter">
+  **Type:** `boolean`
+  
+  **Default:** `false`
+  
+  **Description:** Enable timing jitter (delays) between fragments. Useful against DPI systems that buffer packets.
+  
+  ```toml
+  enable_jitter = false  # Set true for aggressive bypass
+  ```
+</Accordion>
+
+<Accordion title="enable_padding">
+  **Type:** `boolean`
+  
+  **Default:** `true`
+  
+  **Description:** Enable random padding to packets. Makes traffic analysis harder.
+  
+  ```toml
+  enable_padding = true
+  ```
+</Accordion>
+
+<Accordion title="enable_header_normalization">
+  **Type:** `boolean`
+  
+  **Default:** `true`
+  
+  **Description:** Normalize packet headers (randomize IP ID, etc.) to evade fingerprinting.
+  
+  ```toml
+  enable_header_normalization = true
+  ```
+</Accordion>
+
+<Accordion title="log_level">
+  **Type:** `string`
+  
+  **Default:** `"info"`
+  
+  **Options:** `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`
+  
+  **Description:** Logging verbosity level.
+  
+  ```toml
+  log_level = "info"  # Use "debug" for troubleshooting
+  ```
+</Accordion>
+
+<Accordion title="json_logging">
+  **Type:** `boolean`
+  
+  **Default:** `false`
+  
+  **Description:** Output logs in JSON format for machine parsing.
+  
+  ```toml
+  json_logging = false
+  ```
+</Accordion>
+
+## Rules Section
+
+Rules define which traffic to transform and how. Rules are evaluated in priority order (highest first).
+
+### Basic Rule Structure
+
+```toml
+[[rules]]
+name = "https-evasion"
+enabled = true
+priority = 100
+transforms = ["fragment", "padding"]
+
+[rules.match_criteria]
+dst_ports = [443]
+protocols = ["tcp"]
+```
+
+### Rule Fields
+
+<Accordion title="name">
+  **Type:** `string`
+  
+  **Required:** Yes
+  
+  **Description:** Human-readable rule identifier.
+  
+  ```toml
+  name = "https-evasion"
+  ```
+</Accordion>
+
+<Accordion title="enabled">
+  **Type:** `boolean`
+  
+  **Default:** `true`
+  
+  **Description:** Enable or disable this rule.
+  
+  ```toml
+  enabled = true
+  ```
+</Accordion>
+
+<Accordion title="priority">
+  **Type:** `integer`
+  
+  **Default:** `0`
+  
+  **Description:** Rule priority. Higher numbers are evaluated first.
+  
+  ```toml
+  priority = 100  # Evaluated before priority 90
+  ```
+</Accordion>
+
+<Accordion title="transforms">
+  **Type:** `array of strings`
+  
+  **Required:** Yes
+  
+  **Options:** `"fragment"`, `"resegment"`, `"padding"`, `"jitter"`, `"decoy"`
+  
+  **Description:** List of transforms to apply when this rule matches.
+  
+  ```toml
+  transforms = ["fragment", "padding"]
+  ```
+</Accordion>
+
+<Accordion title="overrides">
+  **Type:** `table (key-value pairs)`
+  
+  **Optional:** Yes
+  
+  **Description:** Per-rule parameter overrides.
+  
+  ```toml
+  # Override fragment max_size for this rule only
+  overrides = { "fragment.max_size" = 20 }
+  ```
+</Accordion>
+
+### Match Criteria
+
+Rules match traffic based on these criteria:
+
+<Accordion title="dst_ports">
+  **Type:** `array of integers`
+  
+  **Description:** Match packets to these destination ports.
+  
+  ```toml
+  [rules.match_criteria]
+  dst_ports = [443]  # HTTPS traffic
+  ```
+  
+  **Example - Multiple ports:**
+  ```toml
+  dst_ports = [80, 8080, 8443]  # HTTP and alternate HTTPS ports
+  ```
+</Accordion>
+
+<Accordion title="protocols">
+  **Type:** `array of strings`
+  
+  **Options:** `"tcp"`, `"udp"`
+  
+  **Description:** Match specific protocols.
+  
+  ```toml
+  [rules.match_criteria]
+  protocols = ["tcp"]
+  ```
+</Accordion>
+
+<Accordion title="dst_ip">
+  **Type:** `array of strings`
+  
+  **Description:** Match packets to specific IP addresses or CIDR ranges.
+  
+  ```toml
+  [rules.match_criteria]
+  dst_ip = ["104.16.0.0/12", "172.64.0.0/13"]  # Cloudflare IPs
+  ```
+</Accordion>
+
+### Example Rules
+
+<CodeGroup>
+```toml HTTPS Traffic
+[[rules]]
+name = "https-evasion"
+enabled = true
+priority = 100
+transforms = ["fragment", "padding"]
+
+[rules.match_criteria]
+dst_ports = [443]
+protocols = ["tcp"]
+```
+
+```toml HTTP Traffic
+[[rules]]
+name = "http-evasion"
+enabled = true
+priority = 90
+transforms = ["resegment", "padding"]
+
+[rules.match_criteria]
+dst_ports = [80, 8080]
+protocols = ["tcp"]
+```
+
+```toml DNS Protection
+[[rules]]
+name = "dns-protection"
+enabled = true
+priority = 80
+transforms = ["padding"]
+
+[rules.match_criteria]
+dst_ports = [53]
+protocols = ["udp"]
+```
+
+```toml Cloudflare IPs
+[[rules]]
+name = "sensitive-domains"
+enabled = false
+priority = 110
+transforms = ["fragment", "jitter", "padding"]
+
+[rules.match_criteria]
+dst_ip = ["104.16.0.0/12", "172.64.0.0/13"]
+dst_ports = [443]
+protocols = ["tcp"]
+```
+</CodeGroup>
+
+## Limits Section
+
+Resource and safety limits prevent abuse and crashes.
+
+```toml
+[limits]
+max_flows = 10000
+max_queue_size = 1000
+max_memory_mb = 128
+max_jitter_ms = 500
+flow_timeout_secs = 120
+log_rate_limit = 100
+```
+
+<Accordion title="max_flows">
+  **Type:** `integer`
+  
+  **Default:** `10000`
+  
+  **Description:** Maximum concurrent flows (connections) to track.
+  
+  ```toml
+  max_flows = 10000
+  ```
+</Accordion>
+
+<Accordion title="max_queue_size">
+  **Type:** `integer`
+  
+  **Default:** `1000`
+  
+  **Description:** Maximum packets in processing queue.
+  
+  ```toml
+  max_queue_size = 1000
+  ```
+</Accordion>
+
+<Accordion title="max_memory_mb">
+  **Type:** `integer`
+  
+  **Default:** `128`
+  
+  **Description:** Maximum memory usage in megabytes.
+  
+  ```toml
+  max_memory_mb = 128
+  ```
+</Accordion>
+
+<Accordion title="max_jitter_ms">
+  **Type:** `integer`
+  
+  **Default:** `500`
+  
+  **Description:** Maximum jitter delay in milliseconds.
+  
+  ```toml
+  max_jitter_ms = 500
+  ```
+</Accordion>
+
+<Accordion title="flow_timeout_secs">
+  **Type:** `integer`
+  
+  **Default:** `120`
+  
+  **Description:** Idle timeout for flows in seconds.
+  
+  ```toml
+  flow_timeout_secs = 120  # 2 minutes
+  ```
+</Accordion>
+
+<Accordion title="log_rate_limit">
+  **Type:** `integer`
+  
+  **Default:** `100`
+  
+  **Description:** Maximum log messages per second.
+  
+  ```toml
+  log_rate_limit = 100
+  ```
+</Accordion>
+
+## Transforms Section
+
+Parameters for each transform type.
+
+### Fragment Transform
+
+Splits packets into smaller fragments.
+
+```toml
+[transforms.fragment]
+min_size = 1
+max_size = 40
+split_at_offset = null
+randomize = true
+```
+
+<Accordion title="Parameters">
+  | Parameter | Type | Default | Description |
+  |-----------|------|---------|-------------|
+  | `min_size` | `integer` | `1` | Minimum fragment size in bytes |
+  | `max_size` | `integer` | `40` | Maximum fragment size in bytes |
+  | `split_at_offset` | `integer or null` | `null` | Fixed split offset (null = dynamic) |
+  | `randomize` | `boolean` | `true` | Randomize fragment sizes |
+</Accordion>
+
+**Example - Aggressive fragmentation:**
+```toml
+[transforms.fragment]
+min_size = 1
+max_size = 5  # Very small fragments
+randomize = true
+```
+
+**Example - Fixed split:**
+```toml
+[transforms.fragment]
+min_size = 1
+max_size = 40
+split_at_offset = 2  # Always split at byte 2
+randomize = false
+```
+
+### Resegment Transform
+
+Resegments TCP streams into different sizes.
+
+```toml
+[transforms.resegment]
+segment_size = 16
+max_segments = 8
+```
+
+<Accordion title="Parameters">
+  | Parameter | Type | Default | Description |
+  |-----------|------|---------|-------------|
+  | `segment_size` | `integer` | `16` | Target segment size in bytes |
+  | `max_segments` | `integer` | `8` | Maximum segments per packet |
+</Accordion>
+
+### Padding Transform
+
+Adds random padding to packets.
+
+```toml
+[transforms.padding]
+min_bytes = 0
+max_bytes = 64
+fill_byte = null
+```
+
+<Accordion title="Parameters">
+  | Parameter | Type | Default | Description |
+  |-----------|------|---------|-------------|
+  | `min_bytes` | `integer` | `0` | Minimum padding bytes |
+  | `max_bytes` | `integer` | `64` | Maximum padding bytes |
+  | `fill_byte` | `integer or null` | `null` | Fill byte (null = random) |
+</Accordion>
+
+**Example - Fixed padding:**
+```toml
+[transforms.padding]
+min_bytes = 32
+max_bytes = 32  # Always 32 bytes
+fill_byte = 0   # Fill with zeros
+```
+
+### Jitter Transform
+
+Adds timing delays between fragments.
+
+```toml
+[transforms.jitter]
+min_ms = 0
+max_ms = 50
+```
+
+<Accordion title="Parameters">
+  | Parameter | Type | Default | Description |
+  |-----------|------|---------|-------------|
+  | `min_ms` | `integer` | `0` | Minimum delay in milliseconds |
+  | `max_ms` | `integer` | `50` | Maximum delay in milliseconds |
+</Accordion>
+
+**Example - Fixed delay:**
+```toml
+[transforms.jitter]
+min_ms = 10
+max_ms = 10  # Always 10ms
+```
+
+### Header Transform
+
+Modifies packet headers.
+
+```toml
+[transforms.header]
+normalize_ttl = false
+ttl_value = 64
+normalize_window = false
+randomize_ip_id = true
+```
+
+<Accordion title="Parameters">
+  | Parameter | Type | Default | Description |
+  |-----------|------|---------|-------------|
+  | `normalize_ttl` | `boolean` | `false` | Set fixed TTL value |
+  | `ttl_value` | `integer` | `64` | TTL value if normalized |
+  | `normalize_window` | `boolean` | `false` | Set fixed TCP window size |
+  | `randomize_ip_id` | `boolean` | `true` | Randomize IP ID field |
+</Accordion>
+
+### Decoy Transform
+
+Sends fake packets with low TTL.
+
+```toml
+[transforms.decoy]
+send_before = false
+send_after = false
+ttl = 1
+probability = 0.0
+```
+
+<Accordion title="Parameters">
+  | Parameter | Type | Default | Description |
+  |-----------|------|---------|-------------|
+  | `send_before` | `boolean` | `false` | Send decoy before real packet |
+  | `send_after` | `boolean` | `false` | Send decoy after real packet |
+  | `ttl` | `integer` | `1` | TTL for decoy packets |
+  | `probability` | `float` | `0.0` | Probability of sending decoys (0.0-1.0) |
+</Accordion>
+
+## Complete Example
+
+Here's a complete configuration file combining all sections:
+
+```toml
+# Global settings
+[global]
+enabled = true
+enable_fragmentation = true
+enable_jitter = false
+enable_padding = true
+enable_header_normalization = true
+log_level = "info"
+json_logging = false
+
+# HTTPS bypass rule
+[[rules]]
+name = "https-evasion"
+enabled = true
+priority = 100
+transforms = ["fragment", "padding"]
+
+[rules.match_criteria]
+dst_ports = [443]
+protocols = ["tcp"]
+
+# HTTP bypass rule
+[[rules]]
+name = "http-evasion"
+enabled = true
+priority = 90
+transforms = ["resegment", "padding"]
+
+[rules.match_criteria]
+dst_ports = [80, 8080]
+protocols = ["tcp"]
+
+# DNS protection rule
+[[rules]]
+name = "dns-protection"
+enabled = true
+priority = 80
+transforms = ["padding"]
+
+[rules.match_criteria]
+dst_ports = [53]
+protocols = ["udp"]
+
+# Resource limits
+[limits]
+max_flows = 10000
+max_queue_size = 1000
+max_memory_mb = 128
+max_jitter_ms = 500
+flow_timeout_secs = 120
+log_rate_limit = 100
+
+# Transform parameters
+[transforms.fragment]
+min_size = 1
+max_size = 40
+randomize = true
+
+[transforms.resegment]
+min_segment_size = 1
+max_segment_size = 100
+max_segments = 10
+
+[transforms.padding]
+min_bytes = 0
+max_bytes = 64
+fill = "random"
+
+[transforms.jitter]
+min_ms = 0
+max_ms = 50
+distribution = "uniform"
+
+[transforms.header]
+randomize_ip_id = true
+strip_tcp_timestamps = false
+
+[transforms.decoy]
+probability = 0.1
+send_before = false
+send_after = true
+max_per_flow = 3
+```
+
+## Using Configuration Files
+
+<Steps>
+  <Step title="Create configuration">
+    Generate or write your configuration file:
+    
+    ```bash
+    turkeydpi gen-config --output custom.toml
+    ```
+  </Step>
+  
+  <Step title="Edit configuration">
+    Modify the file to suit your needs:
+    
+    ```bash
+    nano custom.toml
+    ```
+  </Step>
+  
+  <Step title="Validate configuration">
+    Check for errors:
+    
+    ```bash
+    turkeydpi validate custom.toml
+    ```
+    
+    **Output:**
+    ```
+    ✓ Configuration is valid: custom.toml
+    ```
+  </Step>
+  
+  <Step title="Run with configuration">
+    Start TurkeyDPI with your custom config:
+    
+    ```bash
+    turkeydpi run --proxy --config custom.toml
+    ```
+  </Step>
+</Steps>
+
+## Reloading Configuration
+
+You can reload configuration without restarting:
+
+<Steps>
+  <Step title="Start daemon">
+    Run TurkeyDPI in daemon mode:
+    
+    ```bash
+    turkeydpi run --proxy --config config.toml
+    ```
+  </Step>
+  
+  <Step title="Edit configuration">
+    Modify `config.toml` while the daemon is running.
+  </Step>
+  
+  <Step title="Reload">
+    Apply changes without downtime:
+    
+    ```bash
+    turkeydpi reload config.toml
+    ```
+    
+    **Output:**
+    ```
+    Configuration reloaded
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Configuration reloading applies changes to new connections. Existing connections continue using old settings until they close.
+</Note>
+
+## Common Configurations
+
+### Minimal Latency
+
+Optimized for speed (works on Türk Telekom):
+
+```toml
+[global]
+enabled = true
+enable_fragmentation = true
+enable_jitter = false  # No delays
+enable_padding = false
+log_level = "warn"
+
+[[rules]]
+name = "https-minimal"
+enabled = true
+priority = 100
+transforms = ["fragment"]
+
+[rules.match_criteria]
+dst_ports = [443]
+protocols = ["tcp"]
+
+[transforms.fragment]
+min_size = 1
+max_size = 20
+split_at_offset = 2  # Fixed split at byte 2
+randomize = false
+
+[transforms.jitter]
+min_ms = 0
+max_ms = 0  # No jitter
+```
+
+### Maximum Bypass
+
+Aggressive configuration for difficult networks:
+
+```toml
+[global]
+enabled = true
+enable_fragmentation = true
+enable_jitter = true
+enable_padding = true
+enable_header_normalization = true
+log_level = "info"
+
+[[rules]]
+name = "aggressive-bypass"
+enabled = true
+priority = 100
+transforms = ["fragment", "jitter", "padding", "decoy"]
+
+[rules.match_criteria]
+dst_ports = [443, 80, 8080]
+protocols = ["tcp"]
+
+[transforms.fragment]
+min_size = 1
+max_size = 5  # Very small fragments
+randomize = true
+
+[transforms.jitter]
+min_ms = 5
+max_ms = 20  # Random delays
+
+[transforms.padding]
+min_bytes = 0
+max_bytes = 64
+
+[transforms.decoy]
+probability = 0.2  # 20% chance of decoy packets
+send_before = true
+ttl = 1
+```
+
+### DNS Only
+
+Protect DNS queries without affecting other traffic:
+
+```toml
+[global]
+enabled = true
+enable_fragmentation = false
+enable_padding = true
+log_level = "info"
+
+[[rules]]
+name = "dns-only"
+enabled = true
+priority = 100
+transforms = ["padding"]
+
+[rules.match_criteria]
+dst_ports = [53]
+protocols = ["udp"]
+
+[transforms.padding]
+min_bytes = 32
+max_bytes = 64
+```
+
+## Troubleshooting
+
+### Configuration validation fails
+
+**Error: "Configuration error: ..."**
+
+1. **Check TOML syntax:**
+   ```bash
+   # Use a TOML validator
+   cat config.toml | python3 -c "import sys, toml; toml.load(sys.stdin)"
+   ```
+
+2. **Check for typos:**
+   Common mistakes:
+   - `enable = true` instead of `enabled = true`
+   - `port = [443]` instead of `dst_ports = [443]`
+   - Missing quotes: `protocols = [tcp]` instead of `protocols = ["tcp"]`
+
+3. **Use generated config as base:**
+   ```bash
+   turkeydpi gen-config > base.toml
+   ```
+   Compare with your config.
+
+### Rules not matching
+
+If your rules don't seem to work:
+
+1. **Check rule priority:**
+   Higher priority rules are evaluated first.
+
+2. **Enable debug logging:**
+   ```toml
+   log_level = "debug"
+   ```
+   Look for "Rule matched" messages.
+
+3. **Simplify match criteria:**
+   Start with just port matching:
+   ```toml
+   [rules.match_criteria]
+   dst_ports = [443]
+   ```
+
+### Performance issues
+
+If TurkeyDPI is slow:
+
+1. **Reduce fragment size:**
+   ```toml
+   [transforms.fragment]
+   max_size = 40  # Increase from 5
+   ```
+
+2. **Disable jitter:**
+   ```toml
+   enable_jitter = false
+   ```
+
+3. **Reduce logging:**
+   ```toml
+   log_level = "warn"  # Less verbose
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Basic Usage" icon="play" href="/usage/basic-usage">
+    Return to basic CLI usage
+  </Card>
+  
+  <Card title="ISP Presets" icon="tower-cell" href="/usage/isp-presets">
+    Learn about built-in presets
+  </Card>
+</CardGroup>

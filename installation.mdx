@@ -1,0 +1,369 @@
+---
+title: Installation
+description: Install TurkeyDPI using Cargo or build from source
+---
+
+# Installation
+
+TurkeyDPI can be installed via Cargo (Rust's package manager) or built directly from source. Choose the method that works best for you.
+
+## Prerequisites
+
+Before installing TurkeyDPI, ensure you have:
+
+<CardGroup cols={2}>
+  <Card title="Rust Toolchain" icon="rust">
+    Rust 1.70 or later with Cargo package manager
+  </Card>
+  
+  <Card title="Git" icon="git">
+    Git for cloning the repository (source build only)
+  </Card>
+</CardGroup>
+
+### Installing Rust
+
+If you don't have Rust installed, get it from [rustup.rs](https://rustup.rs):
+
+<CodeGroup>
+```bash macOS/Linux
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+```powershell Windows
+# Download and run rustup-init.exe from https://rustup.rs
+```
+</CodeGroup>
+
+Verify the installation:
+
+```bash
+rustc --version
+cargo --version
+```
+
+You should see output like:
+
+```
+rustc 1.75.0 (82e1608df 2023-12-21)
+cargo 1.75.0 (1d8b05cdd 2023-11-20)
+```
+
+## Method 1: Install from Source (Recommended)
+
+Building from source gives you the latest version with all features.
+
+<Steps>
+  <Step title="Clone the Repository">
+    Clone the TurkeyDPI repository from GitHub:
+    
+    ```bash
+    git clone https://github.com/1etu/turkeydpi.git
+    cd turkeydpi
+    ```
+  </Step>
+  
+  <Step title="Install the CLI Binary">
+    Use Cargo to build and install the `turkeydpi` binary:
+    
+    ```bash
+    cargo install --path cli
+    ```
+    
+    This compiles the project in release mode and installs the binary to `~/.cargo/bin/turkeydpi`.
+    
+    <Note>
+      Make sure `~/.cargo/bin` is in your PATH. The Rust installer usually adds this automatically.
+    </Note>
+  </Step>
+  
+  <Step title="Verify Installation">
+    Check that TurkeyDPI is installed correctly:
+    
+    ```bash
+    turkeydpi --version
+    ```
+    
+    You should see:
+    
+    ```
+    turkeydpi 0.1.0
+    ```
+  </Step>
+</Steps>
+
+## Method 2: Build Manually
+
+If you want to build without installing, or need to customize the build:
+
+<Steps>
+  <Step title="Clone and Build">
+    ```bash
+    git clone https://github.com/1etu/turkeydpi.git
+    cd turkeydpi
+    cargo build --release
+    ```
+    
+    The compiled binary will be at `target/release/turkeydpi`.
+  </Step>
+  
+  <Step title="Run the Binary">
+    You can run it directly:
+    
+    ```bash
+    ./target/release/turkeydpi --help
+    ```
+    
+    Or copy it to a location in your PATH:
+    
+    ```bash
+    cp target/release/turkeydpi ~/.local/bin/
+    # or
+    sudo cp target/release/turkeydpi /usr/local/bin/
+    ```
+  </Step>
+</Steps>
+
+## Project Structure
+
+The TurkeyDPI repository is organized as a Cargo workspace with multiple crates:
+
+```
+turkeydpi/
+├── cli/        # Command-line interface binary
+├── engine/     # Core bypass logic and transforms
+├── backend/    # Proxy server implementations
+├── control/    # Daemon control and IPC
+└── Cargo.toml  # Workspace configuration
+```
+
+From `Cargo.toml`:
+
+```toml
+[workspace]
+resolver = "2"
+members = [
+    "engine",
+    "backend",
+    "control",
+    "cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["1etu"]
+license = "MIT"
+repository = "https://github.com/1etu/turkeydpi"
+```
+
+## Build Options
+
+### Release Build (Optimized)
+
+For production use with full optimizations:
+
+```bash
+cargo build --release
+```
+
+### Debug Build (Fast Compilation)
+
+For development with debug symbols:
+
+```bash
+cargo build
+```
+
+### Verbose Logging
+
+Enable verbose output during compilation:
+
+```bash
+cargo build --release --verbose
+```
+
+## Platform-Specific Notes
+
+### macOS
+
+<Note>
+  On macOS, you may need to grant network permissions the first time you run TurkeyDPI. Click "Allow" when prompted.
+</Note>
+
+TurkeyDPI also includes a native macOS menu bar app:
+
+```bash
+cd TurkeyDPI-App
+./build.sh
+open TurkeyDPI.app
+```
+
+This provides one-click proxy toggle from your menu bar.
+
+### Linux
+
+On Linux, ensure you have the development dependencies:
+
+<CodeGroup>
+```bash Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install build-essential pkg-config libssl-dev
+```
+
+```bash Fedora/RHEL
+sudo dnf install gcc pkg-config openssl-devel
+```
+
+```bash Arch Linux
+sudo pacman -S base-devel openssl
+```
+</CodeGroup>
+
+### Windows
+
+On Windows, you'll need:
+
+1. **Visual Studio Build Tools** or **Visual Studio** with C++ development tools
+2. **Rust** via rustup-init.exe from [rustup.rs](https://rustup.rs)
+
+Then build normally:
+
+```powershell
+git clone https://github.com/1etu/turkeydpi.git
+cd turkeydpi
+cargo install --path cli
+```
+
+## Troubleshooting
+
+### Cargo Not Found
+
+If you get `cargo: command not found`, make sure `~/.cargo/bin` is in your PATH:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# Then reload
+source ~/.bashrc  # or source ~/.zshrc
+```
+
+### Compilation Errors
+
+If you encounter compilation errors:
+
+<Steps>
+  <Step title="Update Rust">
+    ```bash
+    rustup update
+    ```
+  </Step>
+  
+  <Step title="Clean Build">
+    ```bash
+    cargo clean
+    cargo build --release
+    ```
+  </Step>
+  
+  <Step title="Check Dependencies">
+    Ensure you have all system dependencies installed (see platform-specific notes above).
+  </Step>
+</Steps>
+
+### Permission Denied
+
+On Linux/macOS, if you get permission errors when installing:
+
+```bash
+# Don't use sudo with cargo install!
+# Instead, ensure ~/.cargo/bin is writable
+chmod u+w ~/.cargo/bin
+
+# Or install to a custom location
+cargo install --path cli --root ~/my-tools
+```
+
+<Warning>
+  Never run `cargo install` with `sudo`. This can cause permission issues and security risks.
+</Warning>
+
+## Updating TurkeyDPI
+
+To update to the latest version:
+
+```bash
+cd turkeydpi
+git pull origin main
+cargo install --path cli --force
+```
+
+The `--force` flag reinstalls even if the version hasn't changed.
+
+## Uninstalling
+
+To remove TurkeyDPI:
+
+```bash
+cargo uninstall turkeydpi
+```
+
+This removes the binary from `~/.cargo/bin/`. If you built manually, simply delete the binary:
+
+```bash
+rm ~/.local/bin/turkeydpi
+# or wherever you copied it
+```
+
+## Verifying the Installation
+
+Once installed, verify everything works:
+
+```bash
+# Check version
+turkeydpi --version
+
+# View help
+turkeydpi --help
+
+# Test the bypass command
+turkeydpi bypass --help
+```
+
+You should see the command-line interface help text showing all available commands and options.
+
+## Development Dependencies
+
+The project uses these key dependencies from `Cargo.toml`:
+
+```toml
+[workspace.dependencies]
+tokio = { version = "1.35", features = ["full"] }
+bytes = "1.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+parking_lot = "0.12"
+lru = "0.12"
+ipnet = "2.9"
+clap = { version = "4.4", features = ["derive"] }
+```
+
+## Next Steps
+
+Now that TurkeyDPI is installed, learn how to use it:
+
+<CardGroup cols={2}>
+  <Card title="Quick Start Guide" icon="rocket" href="/quickstart">
+    Get your bypass proxy running in 60 seconds
+  </Card>
+  
+  <Card title="Introduction" icon="book" href="/introduction">
+    Learn how TurkeyDPI works under the hood
+  </Card>
+</CardGroup>
